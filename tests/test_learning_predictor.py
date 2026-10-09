@@ -171,7 +171,7 @@ def test_predictor_ledger_snapshot_gating_and_resolution(monkeypatch, tmp_path):
     late = cut2 + 3 * 3_600_000
     _book(db, late)
     out = pr.predict("BTC/USDT", "15m", now=late)
-    assert out["prediction"] == "NO TRADE" and "data_quality" in out["reasons"]
+    assert out["prediction"] == "NO TRADE" and "data_quality" in out["reasons"] and "late_decision" in out["reasons"]
 
     # weak model -> NO TRADE (confidence gate)
     db.execute("DELETE FROM predictions")
@@ -188,3 +188,18 @@ def test_no_model_means_no_prediction(monkeypatch, tmp_path):
     s, db = fresh_settings(monkeypatch, tmp_path)
     assert Predictor(db, s).predict("BTC/USDT", "15m")["status"] == "model_not_ready"
     assert db.scalar("SELECT COUNT(*) FROM predictions") == 0
+
+
+def test_procedure_upgrade_is_a_head_to_head_out_of_sample_comparison(monkeypatch, tmp_path):
+    s, db = fresh_settings(monkeypatch, tmp_path, **FAST)
+    base = planted_signal_candles(2200, "15m")
+    _load_until(db, base, int(base.open_ts.iloc[-1]) + 900_000)
+    key = registry.model_key("BTC/USDT", "15m", 4)
+    assert engine.challenger_cycle(db, s, "BTC/USDT", "15m")["status"] == "baseline_trained"
+    prod = registry.get_production(db, key)
+    params = dict(prod["params"], procedure="old-procedure")  # pretend production came from an older procedure
+    db.execute("UPDATE model_registry SET params_json=? WHERE version=?", (json.dumps(params), prod["version"]))
+    r = engine.challenger_cycle(db, s, "BTC/USDT", "15m")
+    assert r["status"] in ("promoted", "rejected") and r["comparison"]["n_holdout"] >= 100
+    assert engine.challenger_cycle(db, s, "BTC/USDT", "15m")["status"] == "waiting"  # checked once, not repeated
+    assert len([v for v in registry.list_versions(db, key) if v["status"] == "production"]) == 1

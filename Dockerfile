@@ -23,10 +23,12 @@ FROM base AS test
 COPY backend/requirements-dev.txt backend/requirements-dev.txt
 RUN pip install -r backend/requirements-dev.txt
 COPY tests tests
-COPY pytest.ini docker-compose.yml .env.example ./
+COPY pytest.ini docker-compose.yml .env.example Dockerfile .gitignore ./
 COPY deploy deploy
+# byte-compile as root (the app user cannot write into /app), then run the suite unprivileged
+RUN python -m compileall -q backend scripts tests
 USER app
-RUN python -m compileall -q backend scripts tests && python -m pytest
+RUN python -m pytest
 
 # --------------------------------------------------------------- runtime stage
 FROM base AS runtime

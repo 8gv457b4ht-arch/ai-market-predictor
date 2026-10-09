@@ -26,7 +26,7 @@ from ..db import Database, now_ms
 from ..ml.dataset import build_training_frame
 from ..ml.evaluation import backtest, full_metrics, walk_forward
 from ..ml.features import FEATURE_VERSION
-from ..ml.model import EnsembleModel
+from ..ml.model import PROCEDURE_VERSION, EnsembleModel
 from . import registry
 
 log = logging.getLogger("learning")
@@ -82,11 +82,13 @@ def _payload(model, features, key, version, symbol, tf, settings) -> dict:
 
 
 def bootstrap_model(db: Database, settings: Settings, symbol: str, tf: str, frame: pd.DataFrame,
-                    features: list[str], reason: str, parent: str | None) -> dict:
+                    features: list[str], reason: str, parent: str | None, wf: dict | None = None,
+                    comparison: dict | None = None) -> dict:
     key = registry.model_key(symbol, tf, settings.horizon_bars)
     labelled = frame.dropna(subset=["label"]).reset_index(drop=True)
-    wf = walk_forward(labelled, features, settings.horizon_bars, settings.walk_forward_folds,
-                      settings.min_train_rows, settings.confidence_threshold, settings.min_edge)
+    if wf is None:
+        wf = walk_forward(labelled, features, settings.horizon_bars, settings.walk_forward_folds,
+                          settings.min_train_rows, settings.confidence_threshold, settings.min_edge)
     metrics = wf["metrics"]
     metrics["backtest"] = backtest(wf["oos"], tf, settings.horizon_bars, settings.confidence_threshold,
                                    settings.min_edge, settings.fee_bps, settings.slippage_bps,
@@ -102,12 +104,60 @@ def bootstrap_model(db: Database, settings: Settings, symbol: str, tf: str, fram
         db, version=version, key=key, status="production",
         train_start_ts=int(labelled.open_ts.iloc[0]), train_end_ts=int(labelled.open_ts.iloc[-1]),
         n_train=len(labelled), n_validation=int(metrics["n"]), feature_version=FEATURE_VERSION,
-        features=features, params={**model.describe(), "oos_path": oos_path, "horizon": settings.horizon_bars},
-        metrics=metrics, comparison=None, artifact_path=path, parent_version=parent, reason=reason)
+        features=features, params={**model.describe(), "oos_path": oos_path, "horizon": settings.horizon_bars,
+                                    "procedure": PROCEDURE_VERSION},
+        metrics=metrics, comparison=comparison, artifact_path=path, parent_version=parent, reason=reason)
     db.log_event("baseline_trained", {"version": version, "reason": reason, "oos_log_loss": metrics["log_loss"],
                                       "oos_accuracy": metrics["accuracy"], "rows": len(labelled)}, key)
     log.info("%s baseline %s trained (OOS logloss %.4f, acc %.3f)", key, version, metrics["log_loss"], metrics["accuracy"])
     return {"status": "baseline_trained", "version": version, "metrics": {k: metrics[k] for k in ("accuracy", "log_loss", "brier")}}
+
+
+def procedure_upgrade(db: Database, settings: Settings, symbol: str, tf: str, labelled: pd.DataFrame,
+                      features: list[str], prod: dict) -> dict:
+    """A new training procedure must beat production on the SAME out-of-sample predictions.
+
+    Both sides are walk-forward out-of-sample predictions (each model trained only on data before
+    the predicted bar); they are compared on the timestamps they share.
+    """
+    key = registry.model_key(symbol, tf, settings.horizon_bars)
+    db.set_state(f"procedure_checked:{key}:{PROCEDURE_VERSION}", now_ms())
+    prod_oos_path = registry.resolve_path((prod.get("params") or {}).get("oos_path"), settings.model_dir)
+    if prod_oos_path is None or not prod_oos_path.exists():
+        db.log_event("procedure_upgrade_skipped", {"reason": "production has no stored out-of-sample predictions"}, key)
+        return {"status": "waiting", "reason": "no production OOS to compare"}
+    wf = walk_forward(labelled, features, settings.horizon_bars, settings.walk_forward_folds, settings.min_train_rows,
+                      settings.confidence_threshold, settings.min_edge)
+    new_oos = wf["oos"]
+    old_oos = pd.read_csv(prod_oos_path)[["open_ts", "p_down", "p_flat", "p_up"]]
+    both = new_oos.merge(old_oos, on="open_ts", suffixes=("", "_prod"))
+    if len(both) < settings.min_holdout:
+        db.log_event("procedure_upgrade_skipped", {"reason": f"only {len(both)} shared out-of-sample rows"}, key)
+        return {"status": "waiting", "reason": "not enough shared out-of-sample rows"}
+    y = both["label"].astype(int).to_numpy()
+    p_new = both[["p_down", "p_flat", "p_up"]].to_numpy()
+    p_old = both[["p_down_prod", "p_flat_prod", "p_up_prod"]].to_numpy()
+    cmp_ = compare_models(y, p_old, p_new, settings, settings.horizon_bars)
+    cmp_["kind"] = "procedure_upgrade"
+    if cmp_["promote"]:
+        out = bootstrap_model(db, settings, symbol, tf, labelled, features,
+                              f"procedure upgrade to {PROCEDURE_VERSION}: out-of-sample log-loss gain "
+                              f"{cmp_['logloss_gain']:.4f}, P(better) {cmp_['bootstrap_p_better']:.2f}",
+                              prod["version"], wf=wf, comparison=cmp_)
+        db.log_event("challenger_promoted", {"version": out["version"], "replaced": prod["version"], **_short(cmp_)}, key)
+        out["status"] = "promoted"
+        out["comparison"] = _short(cmp_)
+    else:
+        version = registry.new_version(key)
+        registry.register(db, version=version, key=key, status="rejected", train_start_ts=int(labelled.open_ts.iloc[0]),
+                          train_end_ts=int(labelled.open_ts.iloc[-1]), n_train=len(labelled), n_validation=len(both),
+                          feature_version=FEATURE_VERSION, features=features, params={"procedure": PROCEDURE_VERSION},
+                          metrics=wf["metrics"], comparison=cmp_, artifact_path=None, parent_version=prod["version"],
+                          reason="procedure upgrade rejected: " + ", ".join(k for k, v in cmp_["checks"].items() if not v))
+        db.log_event("challenger_rejected", {"version": version, "production": prod["version"], **_short(cmp_)}, key)
+        out = {"status": "rejected", "version": version, "comparison": _short(cmp_)}
+    db.set_state(f"learning_status:{key}", {**out, "ts_ms": now_ms()})
+    return out
 
 
 def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, force: bool = False) -> dict:
@@ -124,6 +174,10 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
     if prod["feature_version"] != FEATURE_VERSION:
         return bootstrap_model(db, settings, symbol, tf, frame, features,
                                f"feature version changed {prod['feature_version']} -> {FEATURE_VERSION}", prod["version"])
+
+    if (prod.get("params") or {}).get("procedure") != PROCEDURE_VERSION and \
+            not db.get_state(f"procedure_checked:{key}:{PROCEDURE_VERSION}"):
+        return procedure_upgrade(db, settings, symbol, tf, labelled, features, prod)
 
     bar = TIMEFRAME_MS[tf]
     h = settings.horizon_bars
@@ -172,7 +226,7 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
         db, version=version, key=key, status=status, train_start_ts=int(train.open_ts.iloc[0]),
         train_end_ts=int(train.open_ts.iloc[-1]), n_train=len(train), n_validation=len(holdout),
         feature_version=FEATURE_VERSION, features=features,
-        params={**challenger.describe(), "holdout_start": hold_start, "horizon": h},
+        params={**challenger.describe(), "holdout_start": hold_start, "horizon": h, "procedure": PROCEDURE_VERSION},
         metrics=chal_metrics, comparison=cmp_, artifact_path=path, parent_version=prod["version"],
         reason="challenger evaluation")
     db.set_state(f"learning_last_attempt:{key}", int(labelled.open_ts.iloc[-1]))

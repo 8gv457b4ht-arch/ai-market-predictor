@@ -144,6 +144,9 @@ class Predictor:
             reasons.append("abnormal_market")
         if regime == "low_liquidity" and self.s.block_low_liquidity:
             reasons.append("low_liquidity")
+        late = (now - int(row["decision_ts"])) > 0.25 * self.s.horizon_bars * TIMEFRAME_MS[tf]
+        if late:
+            reasons.append("late_decision")
         ni, nr = snap["news_impact"], snap["news_relevance"]
         gate_detail = {  # exact numbers behind the decision, shown in the dashboard
             "confidence": conf, "threshold": self.s.confidence_threshold,
@@ -152,6 +155,9 @@ class Predictor:
             "quality_issues": [f"{i['code']}: {i['detail']}" for i in q["issues"]],
             "regime": regime, "news_impact": ni, "news_relevance": nr,
             "decision_delay_sec": round((now - int(row["decision_ts"])) / 1000, 1),
+            # decided after more than a quarter of the horizon had passed (e.g. a delayed scheduled run):
+            # still causal, but not usable as a timely signal
+            "late": late,
         }
         if signal in ("UP", "DOWN") and nr >= 0.5 and ((signal == "UP" and ni <= -0.35) or (signal == "DOWN" and ni >= 0.35)):
             reasons.append("news_conflict")  # news can veto, never create, a signal

@@ -157,3 +157,18 @@ def test_gate_diagnostics_decompose_every_condition():
     sweep = {r["threshold"]: r for r in d["threshold_sweep_informational"]}
     assert sweep[0.40]["signals"] >= sweep[0.70]["signals"]
     assert d["confidence_quantiles"]["max"] == 0.7
+
+
+def test_probabilities_match_base_rates_on_imbalanced_labels():
+    """Regression for the real-data finding: balanced class weights inflated P(UP)/P(DOWN)."""
+    from backend.app.ml.evaluation import walk_forward
+    f, feats = _frame(random_walk_candles, 1700)
+    f = f.copy()
+    rng = np.random.default_rng(0)
+    f["label"] = rng.choice([0, 1, 2], size=len(f), p=[0.15, 0.7, 0.15])  # FLAT-heavy, no information
+    m = walk_forward(f, feats, horizon=4, folds=3, min_train=600)["metrics"]
+    cal = m["gate_diagnostics"]["per_class_calibration"]
+    for k in ("DOWN", "FLAT", "UP"):
+        assert abs(cal[k]["mean_predicted"] - cal[k]["actual_frequency"]) < 0.06, (k, cal[k])
+    assert m["log_loss"] < m["baseline_prior"]["log_loss"] + 0.03  # not worse than the naive prior
+    assert m["gate_diagnostics"]["passed_all"] <= 0.02 * m["n"]   # no information -> (almost) no signals

@@ -136,3 +136,14 @@ test("news rules and freshness-weighted features", () => {
   assert.ok(f.news_top[0].weight > 4 * f.news_top[1].weight);
   assert.equal(A.newsFeatures([ev(-30)], "BTC/USDT", now, 180).news_event_count, 0); // future news ignored
 });
+
+test("probabilities match base rates on imbalanced, uninformative labels", () => {
+  const r = A.rng(11), n = 1400, d = 6;
+  const X = Array.from({ length: n }, () => Array.from({ length: d }, () => r()));
+  const y = X.map(() => { const u = r(); return u < 0.15 ? 0 : u < 0.85 ? 1 : 2; });
+  const m = A.fitEnsemble(X.slice(0, 1000), y.slice(0, 1000), ["a", "b", "c", "d", "e", "f"]);
+  const P = A.predictEnsemble(m, X.slice(1000));
+  const mean = (k) => P.reduce((s, p) => s + p[k], 0) / P.length;
+  assert.ok(Math.abs(mean(1) - 0.7) < 0.08, `FLAT ${mean(1)}`);
+  assert.ok(Math.abs(mean(0) - 0.15) < 0.06 && Math.abs(mean(2) - 0.15) < 0.06);
+});

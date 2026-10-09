@@ -6,7 +6,7 @@
   "use strict";
   const TF_MS = { "1m": 60e3, "5m": 300e3, "15m": 900e3, "30m": 1800e3, "1h": 3600e3, "4h": 14400e3, "1d": 86400e3 };
   const CLASSES = ["DOWN", "FLAT", "UP"];
-  const FEATURE_VERSION = "js-fv1";
+  const FEATURE_VERSION = "js-fv2"; // fv2: natural class weights + temperature/bias calibration
   const BASE_FEATURES = ["ret_1", "ret_3", "ret_6", "ret_12", "roc_10", "ema_gap_9_21", "ema_gap_21_55", "close_vs_ema200",
     "ema21_slope", "rsi_14", "macd", "macd_signal", "macd_hist", "atr_pct", "adx_14", "di_diff", "bb_width", "bb_pos",
     "rv_20", "rv_ratio", "vol_z", "trend_strength", "range_pct", "body_pct", "buy_ratio", "flow_imbalance_20"];
@@ -223,7 +223,10 @@
     return { mu, sd };
   }
   const scale = (X, sc) => X.map((r) => r.map((v, j) => (v - sc.mu[j]) / sc.sd[j]));
-  function classWeights(y, k) {
+  // Natural class weights (all 1). Balanced weights were removed after real BTC/ETH data showed they
+  // inflate P(UP)/P(DOWN) far above the true frequencies. Kept as an option for experiments.
+  function classWeights(y, k, balanced) {
+    if (!balanced) return new Array(k).fill(1);
     const cnt = new Array(k).fill(0); y.forEach((v) => cnt[v]++);
     return cnt.map((c) => (c > 0 ? y.length / (k * c) : 0));
   }
@@ -373,27 +376,30 @@
     const a = predictLogReg(parts.logreg, X), b = predictForest(parts.forest, X), c = predictBoost(parts.boost, X);
     return a.map((p, i) => { const q = p.map((v, k) => Math.max(1e-6, (v + b[i][k] + c[i][k]) / 3)); const s = sum(q); return q.map((v) => v / s); });
   }
-  const tempScale = (P, T) => P.map((p) => softmaxRow(p.map((v) => Math.log(Math.max(v, 1e-6)) / T)));
+  const tempScale = (P, T, bias) => P.map((p) => softmaxRow(p.map((v, k) => Math.log(Math.max(v, 1e-6)) / T + (bias ? bias[k] : 0))));
+  function golden(f, a, b, iters) { const gr = (Math.sqrt(5) - 1) / 2; for (let i = 0; i < (iters || 40); i++) { const c = b - gr * (b - a), d = a + gr * (b - a); if (f(c) < f(d)) b = d; else a = c; } return (a + b) / 2; }
   function fitParts(X, y, seed) {
     return { logreg: fitLogReg(X, y), forest: fitForest(X, y, { seed }), boost: fitBoost(X, y) };
   }
   function fitEnsemble(X, y, features, opts) {
     opts = opts || {};
     if (new Set(y).size < 2) throw new Error("training labels contain a single class");
-    let T = 1;
+    let T = 1, bias = [0, 0, 0];
     const nCal = Math.floor(y.length * 0.2);
     if (opts.calibrate !== false && nCal >= 100 && new Set(y.slice(0, -nCal)).size >= 2) {
       const early = fitParts(X.slice(0, -nCal), y.slice(0, -nCal), 7);
       const P = rawEnsemble(early, X.slice(-nCal)), yc = y.slice(-nCal);
-      const nll = (t) => -mean(tempScale(P, t).map((p, i) => Math.log(Math.max(p[yc[i]], 1e-9))));
-      let a = 0.3, b = 5; const gr = (Math.sqrt(5) - 1) / 2;
-      for (let it = 0; it < 40; it++) { const c = b - gr * (b - a), d = a + gr * (b - a); if (nll(c) < nll(d)) b = d; else a = c; }
-      T = (a + b) / 2;
+      const nll = (t, b) => -mean(tempScale(P, t, b).map((p, i) => Math.log(Math.max(p[yc[i]], 1e-9))));
+      // temperature + per-class bias (corrects base-rate shift), coordinate search
+      for (let round = 0; round < 3; round++) {
+        T = golden((t) => nll(t, bias), 0.3, 5);
+        for (const k of [0, 1]) bias[k] = golden((v) => { const b = bias.slice(); b[k] = v; return nll(T, b); }, -3, 3);
+      }
     }
     const prior = [0, 0, 0]; y.forEach((v) => prior[v]++);
-    return { parts: fitParts(X, y, 42), temperature: T, features, classPrior: prior.map((v) => v / y.length) };
+    return { parts: fitParts(X, y, 42), temperature: T, bias, features, classPrior: prior.map((v) => v / y.length), procedure: "js-natural-weights-temp-bias" };
   }
-  function predictEnsemble(model, X) { return tempScale(rawEnsemble(model.parts, X), model.temperature); }
+  function predictEnsemble(model, X) { return tempScale(rawEnsemble(model.parts, X), model.temperature, model.bias); }
 
   // --------------------------------------------------------- gating
   function gate(pDown, pFlat, pUp, threshold, minEdge) {

@@ -34,7 +34,8 @@
   const server = () => S.mode === "server" && S.server;
   const REASON_TEXT = { confidence_below_threshold: "confidence below threshold", edge_below_min_edge: "UP and DOWN too close",
     flat_more_likely: "FLAT more likely than the direction", low_confidence: "confidence below threshold", data_quality: "data quality check failed",
-    abnormal_market: "abnormal market", low_liquidity: "low liquidity", news_conflict: "fresh news contradicts the model" };
+    abnormal_market: "abnormal market", low_liquidity: "low liquidity", news_conflict: "fresh news contradicts the model",
+    late_decision: "decided too late after the candle close (delayed scheduled run)" };
   const KIND_TEXT = { region_blocked: "blocked in this region", cors: "browser access blocked (CORS)", network: "network/DNS/firewall",
     timeout: "timeout", rate_limited: "rate limited", http_error: "HTTP error", stale_data: "data too old", no_data: "no verified data",
     stale: "stream went silent", gap: "sequence gap", bad_response: "bad response", exchange_error: "exchange error" };
@@ -438,7 +439,7 @@
     $("quality").textContent = isNum(qs) ? `${qs >= 0.9 ? "GOOD" : qs >= 0.7 ? "FAIR" : "BAD"} (${Math.round(qs * 100)}%)` : "—";
     $("newsImpact").textContent = isNum(p.news_impact) ? (p.news_impact > 0 ? "+" : "") + p.news_impact.toFixed(2) : "—";
     $("reasons").textContent = p.prediction === "NO TRADE" ? "No trade because: " + reasonDetail(p) + "." : `Signal passed every gate. Model leans ${String(p.model_direction).toLowerCase()}.`;
-    $("predMeta").textContent = `Candle ${when(p.candle_ts)} · price at prediction ${priceFmt(p.price)} on ${p.exchange} · decided ${p.gate && isNum(p.gate.decision_delay_sec) ? p.gate.decision_delay_sec + " s after close" : when(p.created_ms)} · model ${p.model_version}`;
+    $("predMeta").textContent = `Candle ${when(p.candle_ts)} · price at prediction ${priceFmt(p.price)} on ${p.exchange} · decided ${p.gate && isNum(p.gate.decision_delay_sec) ? Math.round(p.gate.decision_delay_sec / 60) + " min after close" + (p.gate.late ? " (late)" : "") : when(p.created_ms)} · model ${p.model_version}`;
     const b = liveBook(v.primary, S.symbol) || (v.serverBook && { spreadBps: v.serverBook.spread_bps, imbalance: v.serverBook.imbalance, ageSec: (Date.now() - v.serverBook.recv_ms) / 1000 });
     $("spread").textContent = b && isNum(b.spreadBps) ? `${num(b.spreadBps, 2)} bps${b.ageSec > 30 ? " (" + ago(Date.now() - b.ageSec * 1000) + ")" : ""}` : "DATA SOURCE UNAVAILABLE";
     $("imbalance").textContent = b && isNum(b.imbalance) ? (b.imbalance > 0 ? "+" : "") + num(b.imbalance, 2) : "—";

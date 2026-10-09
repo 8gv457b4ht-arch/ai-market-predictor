@@ -90,6 +90,16 @@ services:
       retries: 3
       start_period: 600s
 
+  forecaster:
+    <<: *app
+    command: ["python", "-m", "backend.app.workers.runner", "forecaster"]
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "service", "forecaster", "180"]
+      interval: 60s
+      timeout: 8s
+      retries: 3
+      start_period: 120s
+
   # continuous mode only: publishes the dashboard JSON (and hourly state) to the repository's `data` branch
   publisher:
     <<: *app

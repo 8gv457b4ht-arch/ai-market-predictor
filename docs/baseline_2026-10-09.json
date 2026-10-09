@@ -1,0 +1,209 @@
+{
+ "tag": "baseline-2026-10-09",
+ "data_branch_run": "37962804496",
+ "generated_ms": 1791566120655,
+ "models": {
+  "BTC/USDT|15m|h4": {
+   "version": "btc-usdt-15m-h4-20261009T134824-955",
+   "procedure_reason": "procedure upgrade to ens3-base-tf-features: out-of-sample log-loss gain 0.0149, P(better) 1.00",
+   "oos_n": 1980,
+   "log_loss": 0.837424887434161,
+   "naive_log_loss": 0.8659484255011018,
+   "brier": 0.4773345518668775,
+   "ece": 0.04227090436397,
+   "accuracy": 0.6676767676767676,
+   "signals": {
+    "threshold": 0.55,
+    "min_edge": 0.1,
+    "signals": 3,
+    "coverage": 0.0015151515151515152,
+    "hit_rate": 0.3333333333333333,
+    "wrong_direction": 0,
+    "flat_after_signal": 2
+   },
+   "backtest": {
+    "trades": 3,
+    "long": 3,
+    "short": 0,
+    "win_rate": 0.3333333333333333,
+    "avg_gross_bps": 17.970113777167064,
+    "avg_net_bps": -7.037619346442001,
+    "total_net_return": -0.0021263324563991493,
+    "total_gross_return": 0.005384137539810041,
+    "max_drawdown": -0.0037061236239769313,
+    "profit_factor": 0.6504571151505734,
+    "exposure": 0.00606366851945427,
+    "buy_and_hold_return": 0.022475551183380515,
+    "sharpe_per_trade": -0.29948238196564864,
+    "costs": {
+     "fee_bps_per_side": 10.0,
+     "slippage_bps_per_side": 2.0,
+     "spread_bps": 1.0,
+     "latency_ms": 500.0,
+     "latency_bars": 0,
+     "round_trip_cost_bps": 25.0
+    },
+    "period": {
+     "start": 1789767900000,
+     "end": 1791549000000
+    },
+    "disclaimer": "Historical out-of-sample simulation. Not a guarantee of future results."
+   },
+   "baseline_test": {
+    "gain": 0.027471043408296477,
+    "gain_ci95": [
+     0.012443121132115821,
+     0.04257130912328869
+    ],
+    "p_better": 0.9995,
+    "passed": true,
+    "n": 1980
+   }
+  },
+  "BTC/USDT|1h|h4": {
+   "version": "btc-usdt-1h-h4-20261009T101800-869",
+   "procedure_reason": "procedure upgrade to ens2-natural-weights-temp-bias: out-of-sample log-loss gain 0.0475, P(better) 1.00",
+   "oos_n": 1970,
+   "log_loss": 1.0451063256532462,
+   "naive_log_loss": 1.0477354811876156,
+   "brier": 0.6275339648465112,
+   "ece": 0.014526812249083015,
+   "accuracy": 0.4918781725888325,
+   "signals": {
+    "threshold": 0.55,
+    "min_edge": 0.1,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "wrong_direction": 0,
+    "flat_after_signal": 0
+   },
+   "backtest": {
+    "trades": 0,
+    "note": "no signal passed the confidence gate"
+   },
+   "baseline_test": {
+    "gain": 0.00178493696120174,
+    "gain_ci95": [
+     -0.006780839207537935,
+     0.009492785582291404
+    ],
+    "p_better": 0.6745,
+    "passed": false,
+    "n": 1970
+   }
+  },
+  "ETH/USDT|15m|h4": {
+   "version": "eth-usdt-15m-h4-20261009T134855-253",
+   "procedure_reason": "procedure upgrade to ens3-base-tf-features: out-of-sample log-loss gain 0.0187, P(better) 1.00",
+   "oos_n": 1980,
+   "log_loss": 0.9313419437360351,
+   "naive_log_loss": 0.9533750323749893,
+   "brier": 0.5422772818365682,
+   "ece": 0.03084352302762794,
+   "accuracy": 0.604040404040404,
+   "signals": {
+    "threshold": 0.55,
+    "min_edge": 0.1,
+    "signals": 6,
+    "coverage": 0.0030303030303030303,
+    "hit_rate": 0.16666666666666666,
+    "wrong_direction": 3,
+    "flat_after_signal": 2
+   },
+   "backtest": {
+    "trades": 4,
+    "long": 4,
+    "short": 0,
+    "win_rate": 0.0,
+    "avg_gross_bps": -41.797182340585216,
+    "avg_net_bps": -66.77503928517929,
+    "total_net_return": -0.026521481344629505,
+    "total_gross_return": -0.016692624874626638,
+    "max_drawdown": -0.02541741969000788,
+    "profit_factor": 0.0,
+    "exposure": 0.00808489135927236,
+    "buy_and_hold_return": -0.05048253405507397,
+    "sharpe_per_trade": -1.8455262923921372,
+    "costs": {
+     "fee_bps_per_side": 10.0,
+     "slippage_bps_per_side": 2.0,
+     "spread_bps": 1.0,
+     "latency_ms": 500.0,
+     "latency_bars": 0,
+     "round_trip_cost_bps": 25.0
+    },
+    "period": {
+     "start": 1789767900000,
+     "end": 1791549000000
+    },
+    "disclaimer": "Historical out-of-sample simulation. Not a guarantee of future results."
+   },
+   "baseline_test": {
+    "gain": 0.020631368290460143,
+    "gain_ci95": [
+     0.00118733174461273,
+     0.03785328371209527
+    ],
+    "p_better": 0.9815,
+    "passed": true,
+    "n": 1980
+   }
+  },
+  "ETH/USDT|1h|h4": {
+   "version": "eth-usdt-1h-h4-20261009T134911-903",
+   "procedure_reason": "procedure upgrade to ens3-base-tf-features: out-of-sample log-loss gain 0.0088, P(better) 1.00",
+   "oos_n": 1975,
+   "log_loss": 1.0581447468847818,
+   "naive_log_loss": 1.0536346526721132,
+   "brier": 0.6370382789678994,
+   "ece": 0.0203559548975314,
+   "accuracy": 0.46632911392405063,
+   "signals": {
+    "threshold": 0.55,
+    "min_edge": 0.1,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "wrong_direction": 0,
+    "flat_after_signal": 0
+   },
+   "backtest": {
+    "trades": 0,
+    "note": "no signal passed the confidence gate"
+   },
+   "baseline_test": {
+    "gain": -0.004759193056333391,
+    "gain_ci95": [
+     -0.015337404374043682,
+     0.006435530481703456
+    ],
+    "p_better": 0.196,
+    "passed": false,
+    "n": 1975
+   }
+  }
+ },
+ "ledger": {
+  "predictions": 74,
+  "resolved": 58,
+  "signals": 0,
+  "first_candle": 1791532800000,
+  "last_candle": 1791565200000,
+  "error_classes": {
+   "correct_abstain": 25,
+   "gated_would_be_correct": 1,
+   "missed_move": 32
+  }
+ },
+ "tests": {
+  "python": 73,
+  "js": 19,
+  "browser": [
+   "browser_offline (ru/uk/en, 390px)",
+   "browser_server",
+   "browser_mocked"
+  ],
+  "ci_run": "37959415784 (all jobs green)"
+ }
+}

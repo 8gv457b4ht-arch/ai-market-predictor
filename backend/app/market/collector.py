@@ -181,6 +181,8 @@ class CandleSync:
         self.errors: dict[str, str] = {}
 
     def _bars_for(self, exchange: str, tf: str) -> int:
+        if exchange == self.s.primary_exchange and tf == "1m" and self.s.forecast_enabled:
+            return self.s.forecast_1m_bars  # minute-horizon forecasts learn on 30 days of 1-minute candles
         if exchange == self.s.primary_exchange:
             return self.s.history_bars if tf in self.s.predict_timeframes else self.s.context_history_bars
         return 500
@@ -243,7 +245,9 @@ class CandleSync:
 
 
 async def run_collector(db: Database, settings: Settings, stop: asyncio.Event, connect=None) -> None:
-    agg = Aggregator(db, settings.store_raw_trades)
+    primary = settings.primary_exchange
+    # 1-second bars for the forecaster: the model exchange only (all exchanges while it is still "auto")
+    agg = Aggregator(db, settings.store_raw_trades, second_bar_exchanges=None if primary == "auto" else {primary})
     for ex in settings.exchanges:
         for sym in settings.symbols:
             agg.state(ex, sym)

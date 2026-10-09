@@ -186,6 +186,27 @@ def export_public(db: Database, settings: Settings, out_dir: Path) -> dict:
         "health": health, "source_stats": source_stats(db, now), "model_changes": changes,
         "disclaimer": "Read-only research system. Probabilities are not trading recommendations; no orders are placed.",
     }
+    if getattr(settings, "forecast_enabled", False) and primary:
+        from ..forecast.engine import Forecaster
+        from ..forecast.horizons import HORIZONS
+        fc = Forecaster(db, settings)
+        fc.missing = db.get_state("forecast_missing") or {}
+        state["forecasts"] = {"horizons": [{"seconds": h.seconds, "label": h.label, "refresh_sec": fc.refresh_ms(h) / 1000, "grid": h.grid}
+                                           for h in HORIZONS],
+                              "latest": fc.latest(), "stats": fc.stats(now)}
+        recent = {}
+        cols = ("forecast_id,created_ms,data_ts_ms,symbol,exchange,horizon_sec,target_ts,ref_price,ref_source,p_up,p_down,p_flat,"
+                "cost_bps,q10_bps,q50_bps,q90_bps,uncertainty,decision,reasons,model_version,model_status,base_p_up,base_p_down,"
+                "base_p_flat,input_hash,resolved_ms,resolution_source,resolution_lag_ms,actual_price,actual_bps,actual_class,"
+                "brier,brier_base,abs_err_bps,abs_err_rw_bps,in_range,net_bps")
+        for sym in settings.symbols:
+            for h in HORIZONS:
+                rows = db.query(f"SELECT {cols} FROM forecasts WHERE symbol=? AND horizon_sec=? ORDER BY created_ms DESC LIMIT 40",
+                                (sym, h.seconds))
+                for r in rows:
+                    r["reasons"] = json.loads(r["reasons"])
+                recent[f"{sym}|f{h.seconds}"] = rows
+        _write(out_dir / "forecasts.json", {"generated_ms": now, "recent": recent})
     _write(out_dir / "state.json", state)
     _write(out_dir / "ledger.json", {"generated_ms": now, "predictions": ledger})
     return {"files": sorted(p.name for p in out_dir.glob("*.json")), "ledger_rows": len(ledger)}

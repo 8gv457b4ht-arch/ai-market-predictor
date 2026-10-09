@@ -84,8 +84,9 @@ def periodic(service: str, fn, interval, request_key: str | None = None, run_fir
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1 or argv[0] not in {"collector", "news", "predictor", "learner", "backup", "publisher"}:
-        print("usage: python -m backend.app.workers.runner collector|news|predictor|learner|backup|publisher", file=sys.stderr)
+    if len(argv) != 1 or argv[0] not in {"collector", "news", "predictor", "learner", "backup", "publisher", "forecaster"}:
+        print("usage: python -m backend.app.workers.runner collector|news|predictor|learner|backup|publisher|forecaster",
+              file=sys.stderr)
         return 2
     service = argv[0]
     setup_logging(service)
@@ -125,8 +126,28 @@ def main(argv: list[str]) -> int:
         def learn(forced):
             res = {"models_check": verify_models(db, s), "learning": run_learning_once(db, s, force=forced)}
             res["baseline_tests"] = baseline_tests(db, s)  # the predictor gates signals on this
+            if s.forecast_enabled:
+                from ..forecast.train import run_training
+                res["forecast_training"] = run_training(db, s, s.forecast_train_budget_sec)
             return res
         periodic("learner", learn, learner_interval, "learning_request")
+    elif service == "forecaster":
+        # forward-looking forecasts for every horizon every ~2 s, and checks of past ones (continuous mode)
+        from ..cloud.cycle import ForecastTicker
+        ticker = ForecastTicker(db, s, s.primary_exchange)
+        stop = _stop_event()
+        last_save = 0.0
+        while not stop.is_set():
+            t0 = time.monotonic()
+            try:
+                ticker()
+                if t0 - last_save > 60:
+                    last_save = t0
+                    db.heartbeat("forecaster", {"status": "ok", **ticker.save()})
+            except Exception:  # noqa: BLE001
+                log.exception("forecaster tick failed")
+                db.heartbeat("forecaster", {"status": "error"})
+            stop.wait(max(0.2, 2.0 - (time.monotonic() - t0)))
     elif service == "publisher":
         from .publisher import run_publisher
         run_publisher(db, s, _stop_event())

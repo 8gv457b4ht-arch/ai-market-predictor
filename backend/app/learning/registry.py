@@ -25,7 +25,7 @@ def save_artifact(model_dir: Path, version: str, payload: dict) -> str:
     model_dir.mkdir(parents=True, exist_ok=True)
     path = model_dir / f"{version}.joblib"
     tmp = path.with_suffix(".tmp")
-    joblib.dump(payload, tmp)
+    joblib.dump(payload, tmp, compress=3)  # several models per run go into the state that is pushed to git
     tmp.replace(path)  # atomic: readers never see a half-written file
     return str(path)
 

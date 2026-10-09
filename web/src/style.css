@@ -168,12 +168,15 @@ dialog input { width: 100%; margin: 8px 0 14px; }
 @media (prefers-reduced-motion: reduce) { .tribar .seg { transition: none; } }
 
 /* ---- standalone web app additions ---- */
-.layout { grid-template-areas: "readout charts" "system system" "news model" "ledger ledger"; }
+.layout { grid-template-areas: "readout charts" "horizons horizons" "system system" "news model" "ledger ledger"; }
 @media (min-width: 1180px) {
   .layout { grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "readout charts charts" "system news model" "ledger ledger ledger"; }
+    grid-template-areas: "readout charts charts" "horizons horizons horizons" "system news model" "ledger ledger ledger"; }
 }
-@media (max-width: 860px) { .layout { grid-template-areas: "readout" "charts" "system" "news" "model" "ledger"; } }
+@media (max-width: 860px) { .layout { grid-template-areas: "readout" "charts" "horizons" "system" "news" "model" "ledger"; } }
+.horizons { grid-area: horizons; }
+.dec-LONG { color: var(--up); font-weight: 700; } .dec-SHORT { color: var(--down); font-weight: 700; } .dec-NOTRADE { color: var(--ink-2); }
+.fst-validated { color: var(--up); } .fst-not_better, .fst-degraded { color: var(--down); } .fst-collecting, .fst-not_trained { color: var(--flat); }
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: currentColor; vertical-align: 1px; }
 .brand .sub { display: flex; align-items: center; gap: 0; }
 .phase { margin: 10px 16px 0; padding: 8px 12px; border-radius: var(--radius-s); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-size: 0.88rem; }

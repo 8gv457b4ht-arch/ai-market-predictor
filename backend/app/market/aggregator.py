@@ -69,12 +69,19 @@ class SymbolState:
     recent_id_set: set = field(default_factory=set)
     raw_trades: list = field(default_factory=list)
     stats: StreamStats = field(default_factory=StreamStats)
+    # 1-second bars by exchange timestamp: sec -> [open, high, low, close, buy_vol, sell_vol, trades, last_trade_ms]
+    sec_bars: dict = field(default_factory=dict)
+    last_price: float | None = None
+    last_trade_ts: int | None = None
 
 
 class Aggregator:
-    def __init__(self, db: Database | None = None, store_raw_trades: bool = True):
+    def __init__(self, db: Database | None = None, store_raw_trades: bool = True,
+                 second_bar_exchanges: set[str] | None = None):
         self.db = db
         self.store_raw_trades = store_raw_trades
+        # exchanges whose 1-second bars are stored (None = all); the forecaster needs the primary one
+        self.second_bar_exchanges = second_bar_exchanges
         self.states: dict[tuple[str, str], SymbolState] = {}
         self.exchange_stats: dict[str, StreamStats] = {}
 
@@ -178,6 +185,21 @@ class Aggregator:
         bar.last_price = price
         bar.dirty = True
         st.stats.last_trade_ms = recv_ms
+        if st.last_trade_ts is None or ts >= st.last_trade_ts:
+            st.last_price, st.last_trade_ts = price, ts
+        # a trade arriving > 4 s late would overwrite an already written second with a partial bar: skip it there
+        if (self.second_bar_exchanges is None or st.exchange in self.second_bar_exchanges) and ts // 1000 >= recv_ms // 1000 - 4:
+            sec = ts // 1000
+            sb = st.sec_bars.get(sec)
+            if sb is None:
+                st.sec_bars[sec] = [price, price, price, price, qty if side == "buy" else 0.0,
+                                    qty if side == "sell" else 0.0, 1, ts]
+            else:
+                sb[1], sb[2] = max(sb[1], price), min(sb[2], price)
+                if ts >= sb[7]:
+                    sb[3], sb[7] = price, ts
+                sb[4 if side == "buy" else 5] += qty
+                sb[6] += 1
         if self.store_raw_trades:
             st.raw_trades.append((st.exchange, st.symbol, None if tid is None else str(tid), ts, price, qty, side, recv_ms))
         return status
@@ -216,8 +238,12 @@ class Aggregator:
         if self.db is None:
             return {}
         now = now or now_ms()
-        bars, raws, books, samples, statuses = [], [], [], [], []
+        bars, raws, books, samples, statuses, secs = [], [], [], [], [], []
         for st in self.states.values():
+            for sec, b in list(st.sec_bars.items()):
+                secs.append((st.exchange, st.symbol, sec, *b))
+                if sec < now // 1000 - 5:  # complete and written -> drop from memory
+                    del st.sec_bars[sec]
             for ts, b in list(st.bars.items()):
                 if b.dirty:
                     vwap = b.notional / (b.buy_volume + b.sell_volume) if (b.buy_volume + b.sell_volume) else None
@@ -255,6 +281,11 @@ class Aggregator:
             self.db.executemany(
                 "INSERT INTO trades_raw(exchange,symbol,trade_id,ts_ms,price,qty,side,recv_ms) VALUES(?,?,?,?,?,?,?,?)", raws)
             self.db.executemany(
+                "INSERT INTO price_seconds(exchange,symbol,ts_sec,open,high,low,close,buy_volume,sell_volume,trades,last_trade_ms) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(exchange,symbol,ts_sec) DO UPDATE SET high=excluded.high,"
+                "low=excluded.low,close=excluded.close,buy_volume=excluded.buy_volume,sell_volume=excluded.sell_volume,"
+                "trades=excluded.trades,last_trade_ms=excluded.last_trade_ms", secs)
+            self.db.executemany(
                 "INSERT INTO book_state(exchange,symbol,ts_ms,recv_ms,best_bid,best_ask,mid,spread_bps,bid_depth,ask_depth,imbalance,levels_json) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(exchange,symbol) DO UPDATE SET ts_ms=excluded.ts_ms,"
                 "recv_ms=excluded.recv_ms,best_bid=excluded.best_bid,best_ask=excluded.best_ask,mid=excluded.mid,"
@@ -273,5 +304,5 @@ class Aggregator:
                 "duplicates=excluded.duplicates,invalid=excluded.invalid,stale_events=excluded.stale_events,"
                 "clock_skew_ms=excluded.clock_skew_ms,last_error=excluded.last_error,updated_ms=excluded.updated_ms",
                 statuses)
-        return {"bars": len(bars), "trades": len(raws), "books": len(books), "samples": len(samples)}
+        return {"bars": len(bars), "trades": len(raws), "books": len(books), "samples": len(samples), "seconds": len(secs)}
 

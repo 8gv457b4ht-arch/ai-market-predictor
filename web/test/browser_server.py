@@ -100,6 +100,16 @@ async def main(tmp: Path):
                 for part in ("Ожидаемые издержки", "После издержек", "Против базового прогноза", "Проверка результата", "Версия модели"):
                     assert part in dlg, part
                 await page.click("#predDialogClose")
+                # forward forecasts by horizon: all 14 horizons listed, details open
+                fc_rows = await page.evaluate("document.querySelectorAll('#fcTable tbody tr').length")
+                fc_text = await page.inner_text("#fcTable")
+                print("forecast table:", fc_text[:400].replace("\n", " | "))
+                assert fc_rows == 14 and "1h" in fc_text and "5s" in fc_text and ("сбор данных" in fc_text or "не обучена" in fc_text), fc_rows
+                await page.click("#fcTable tbody tr >> nth=8")  # 1 hour
+                await page.wait_for_selector("#fcDialog[open]")
+                fdlg = await page.inner_text("#fcDialog")
+                assert "Независимая проверка" in fdlg and "Живые прогнозы" in fdlg, fdlg[:500]
+                await page.click("#fcDialogClose")
                 # languages: no reload, ledger unchanged, nothing untranslated
                 n_rows = await page.evaluate("document.querySelectorAll('#ledger tbody tr').length")
                 await page.evaluate("window.__marker = 7")
@@ -110,7 +120,7 @@ async def main(tmp: Path):
                     assert await page.text_content("#sysTitle") == word
                     assert await page.evaluate("window.__marker") == 7
                     assert await page.evaluate("document.querySelectorAll('#ledger tbody tr').length") == n_rows
-                    leaked = __import__("re").findall(r"\b(?:st|det|chg|model|ledger|reason|pred|kind|cls|why|filter)\.[a-z_]+\.?[a-z_]*\b", body)
+                    leaked = __import__("re").findall(r"\b(?:st|det|chg|model|ledger|reason|pred|kind|cls|why|filter|fc|fst|fr)\.[a-z_]+\.?[a-z_]*\b", body)
                     assert not leaked, (lang, leaked[:5])
                 await page.select_option("#ledgerFilter", "notrade")
                 await page.wait_for_timeout(300)

@@ -34,6 +34,9 @@ test("dynamic key families are complete (reasons, regimes, statuses, error kinds
     "kind.": ["region_blocked", "cors", "network", "timeout", "rate_limited", "http_error", "stale_data", "no_data", "stale", "gap", "exchange_error"],
     "cls.": ["correct", "wrong_direction", "false_move", "correct_abstain", "gated_would_be_correct", "missed_move", "late"],
     "st.name.": ["api", "binance", "bybit", "okx", "history", "websocket", "database", "model", "news", "prediction", "run", "backup"],
+    "fst.": ["not_trained", "collecting", "validated", "not_better", "degraded"],
+    "fr.": ["data_stale", "model_not_validated", "model_not_better_than_baseline", "no_edge_after_costs", "low_confidence", "insufficient_data"],
+    "fc.not_issued.": ["model_not_trained", "no_price", "insufficient_data"],
   };
   for (const [p, list] of Object.entries(need)) for (const k of list) assert.ok(I.has(p + k), p + k);
   // every status code the status module can emit has a text

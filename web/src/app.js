@@ -17,7 +17,7 @@
     anthropicKey: "", anthropicModel: "claude-haiku-5-5", newsKey: "", notifyEnabled: false, notifySignals: true, notifyAll: false, notifyOutages: true,
     notifyMinConf: 0, notifyMaxAgeMin: 10 };
   const $ = (id) => document.getElementById(id);
-  const S = { mode: "detecting", server: null, serverErr: null, serverLedger: [], serverCandles: {}, lastServerFetch: 0, cfg: null,
+  const S = { mode: "detecting", server: null, serverErr: null, serverLedger: [], serverCandles: {}, serverForecasts: {}, lastServerFetch: 0, cfg: null,
     settings: { ...DEFAULTS }, primary: null, candles: {}, tickers: {}, streams: {}, registry: { versions: [], production: {} },
     models: {}, ledger: new Map(), news: [], newsStatus: { state: "NOT STARTED" }, jobs: [], training: null, learning: { lastRun: null, status: {} },
     lastPoll: null, pollError: null, historyErrors: {}, tab: "price", symbol: "BTC/USDT", tf: "15m", bookEx: "binance", dbOk: false,
@@ -53,9 +53,10 @@
 
   // NO TRADE: machine reason (ledger) -> user-facing code (kept in English, like an error code) + translated explanation
   const CODE_OF = { confidence_below_threshold: "LOW_CONFIDENCE", low_confidence: "LOW_CONFIDENCE", edge_below_min_edge: "LOW_CONFIDENCE",
-    flat_more_likely: "LOW_CONFIDENCE", stale_data: "STALE_DATA", late_decision: "STALE_DATA", insufficient_history: "INSUFFICIENT_HISTORY",
+    flat_more_likely: "LOW_CONFIDENCE", stale_data: "STALE_DATA", late_decision: "STALE_DATA", data_stale: "DATA_STALE", insufficient_history: "INSUFFICIENT_HISTORY",
     model_not_ready: "MODEL_NOT_READY", low_liquidity: "HIGH_SPREAD", model_not_better_than_baseline: "MODEL_NOT_BETTER_THAN_BASELINE",
-    no_edge_after_costs: "NO_EDGE_AFTER_COSTS", data_quality: "DATA_QUALITY", abnormal_market: "ABNORMAL_MARKET", news_conflict: "NEWS_CONFLICT" };
+    no_edge_after_costs: "NO_EDGE_AFTER_COSTS", model_not_validated: "MODEL_NOT_VALIDATED", insufficient_data: "INSUFFICIENT_DATA",
+    data_quality: "DATA_QUALITY", abnormal_market: "ABNORMAL_MARKET", news_conflict: "NEWS_CONFLICT" };
   const codeLabel = (c) => c.replaceAll("_", " ");
   function reasonCodes(p) { return [...new Set((p.gate_reasons || []).map((r) => CODE_OF[r] || r.toUpperCase()))]; }
   function reasonDetail(p) {
@@ -121,6 +122,8 @@
       if (first) fillTfOptions(S.server.settings.predict_timeframes);
       const l = await fetch(S.cfg.state_url + "ledger.json" + bust, { cache: "no-store" });
       if (l.ok) { const prev = S.serverLedger; S.serverLedger = (await l.json()).predictions || []; notifyNew(prev); }
+      const fr = await fetch(S.cfg.state_url + "forecasts.json" + bust, { cache: "no-store" });
+      if (fr.ok) S.serverForecasts = (await fr.json()).recent || {};
       for (const sym of S.server.settings.symbols) for (const tf of S.server.settings.predict_timeframes) {
         const c = await fetch(`${S.cfg.state_url}candles_${sym.replace("/", "-")}_${tf}.json${bust}`, { cache: "no-store" });
         if (c.ok) S.serverCandles[`${sym}|${tf}`] = await c.json();
@@ -443,6 +446,7 @@
     $("priceSource").textContent = price ? t("price.source", { src }) : S.mode === "server" ? (S.serverErr || t("price.no_backend_price")) : primaryHint();
     const ch = v.ticker && v.ticker.change_24h_pct; $("change").textContent = isNum(ch) ? `${ch >= 0 ? "+" : ""}${num(ch, 2)}% ${t("price.24h")}` : ""; $("change").dataset.dir = ch > 0 ? "up" : ch < 0 ? "down" : "";
     renderPrediction(v); renderStatus(); renderExchanges(v); renderModel(v); renderChanges(v); renderLedger(); renderNews(); drawChart(v); renderProbe(); renderNotifyInfo();
+    renderForecasts();
   }
   function renderPrediction(v) {
     const p = v.latest, tfms = A.TF_MS[S.tf];
@@ -678,6 +682,82 @@
     })));
     $("moreBtn").hidden = rows.length <= S.ledgerLimit;
   }
+  // ------------------------------------------------------------- forward-looking forecasts per horizon
+  const fcodes = (rs) => (rs || []).map((r) => codeLabel(CODE_OF[r] || r.toUpperCase()));
+  const bps = (x, d = 1) => (isNum(x) ? `${x > 0 ? "+" : ""}${num(x, d)} ${t("unit.bps")}` : "—");
+  const durLabel = (sec) => (sec < 60 ? `${sec} ${t("unit.s")}` : sec < 3600 ? t("time.min", { n: sec / 60 }) : sec < 86400 ? t("time.h", { n: sec / 3600 }) : t("unit.day"));
+  function renderForecasts() {
+    const sv = server(), tb = $("fcTable");
+    if (!sv || !sv.forecasts) { $("fcNote").textContent = t(S.mode === "server" ? "fc.not_yet" : "fc.local"); tb.replaceChildren(); return; }
+    const fc = sv.forecasts, now = Date.now();
+    $("fcNote").textContent = t("fc.note", { ago: ago(sv.generated_ms) });
+    const head = [t("fc.col.horizon"), t("fc.col.status"), t("fc.col.made"), t("fc.col.decision"), t("fc.col.probs"), t("fc.col.range"),
+      t("fc.col.target"), t("fc.col.reason"), t("fc.col.checked"), t("fc.col.dir"), t("fc.col.mae"), t("fc.col.brier"), t("fc.col.cover"), t("fc.col.net")];
+    const rows = fc.horizons.map((h) => {
+      const key = `${S.symbol}|f${h.seconds}`, st = fc.stats[key] || {}, f = fc.latest[key], lv = st.live || {}, ho = st.holdout || {};
+      const status = st.status || "not_trained";
+      const statusText = t("fst." + status) + (status === "collecting" && st.training && st.training.n_independent_total != null ? ` (${st.training.n_independent_total})` : "");
+      const made = f ? `${clock(f.created_ms)} · ${ago(f.created_ms)}` : (st.not_issued && st.not_issued.last ? t("fc.not_issued." + st.not_issued.last) : "—");
+      const probs = f ? `↑${pct(f.p_up, 0)} ↓${pct(f.p_down, 0)} ·${pct(f.p_flat, 0)}` : "—";
+      const range = f ? `${bps(f.q10_bps)} … ${bps(f.q90_bps)}` + (f.detail && f.detail.range_price ? ` (${priceFmt(f.detail.range_price[0])}–${priceFmt(f.detail.range_price[1])})` : "") : "—";
+      const target = f ? `${clock(f.target_ts)}${f.target_ts > now ? " (" + t("time.in", { v: inDur((f.target_ts - now) / 1000) }) + ")" : ""}` : "—";
+      const brier = isNum(lv.brier_gain) ? `${num(lv.brier_gain, 4)} [${num(lv.brier_gain_ci95[0], 4)}…${num(lv.brier_gain_ci95[1], 4)}]` : "—";
+      const tr = el("tr", { class: "clickable", tabindex: "0", role: "button", "aria-label": t("fc.open") },
+        el("td", { "data-label": t("fc.col.horizon"), text: h.label }),
+        el("td", { class: "fst-" + status, "data-label": t("fc.col.status"), text: statusText }),
+        el("td", { "data-label": t("fc.col.made"), text: made }),
+        el("td", { class: "dec-" + (f ? f.decision.replace(" ", "") : ""), "data-label": t("fc.col.decision"), text: f ? f.decision : "—" }),
+        el("td", { "data-label": t("fc.col.probs"), text: probs }), el("td", { "data-label": t("fc.col.range"), text: range }),
+        el("td", { "data-label": t("fc.col.target"), text: target }),
+        el("td", { class: "small wrap", "data-label": t("fc.col.reason"), text: f ? (fcodes(f.reasons).join(", ") || t("ledger.passed")) : "—" }),
+        el("td", { class: "num", "data-label": t("fc.col.checked"), text: lv.n != null ? `${lv.n} (${lv.n_independent})${lv.sufficient ? "" : " · " + t("fc.too_few")}` : `0` }),
+        el("td", { class: "num", "data-label": t("fc.col.dir"), text: pct(lv.direction_hit, 0) }),
+        el("td", { class: "num", "data-label": t("fc.col.mae"), text: isNum(lv.mae_bps) ? `${num(lv.mae_bps, 1)} / ${num(lv.mae_rw_bps, 1)}` : "—" }),
+        el("td", { class: "num", "data-label": t("fc.col.brier"), text: brier }),
+        el("td", { class: "num", "data-label": t("fc.col.cover"), text: pct(lv.coverage_10_90, 0) }),
+        el("td", { class: "num", "data-label": t("fc.col.net"), text: lv.signals ? `${lv.signals}: ${bps(lv.avg_net_bps)}` : "—" }));
+      tr.onclick = () => openForecast(h, key); tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openForecast(h, key); } };
+      return tr;
+    });
+    tb.replaceChildren(el("thead", {}, el("tr", {}, ...head.map((x) => el("th", { text: x })))), el("tbody", {}, ...rows));
+  }
+  function openForecast(h, key) {
+    const sv = server(), fc = sv.forecasts, st = fc.stats[key] || {}, f = fc.latest[key], ho = st.holdout || {}, lv = st.live || {}, tr = st.training || {};
+    $("fcDialogTitle").textContent = `${S.symbol} · ${h.label} · ${t("fst." + (st.status || "not_trained"))}`;
+    const out = [el("p", { class: "small", text: t("fc.dlg.setup", { h: durLabel(h.seconds), r: durLabel(h.refresh_sec), grid: h.grid }) })];
+    if (f) {
+      out.push(el("h4", { text: t("fc.dlg.latest") }));
+      kvInto(out, [[t("fc.dlg.id"), f.forecast_id], [t("fc.dlg.made"), `${when(f.created_ms)} (${t("fc.dlg.data_age", { s: num(f.detail.data_age_sec, 1) })})`],
+        [t("fc.dlg.price"), `${priceFmt(f.ref_price)} · ${f.exchange} · ${f.ref_source}`], [t("fc.col.decision"), f.decision],
+        [t("fc.col.probs"), t("fc.dlg.probs", { up: pct(f.p_up), down: pct(f.p_down), flat: pct(f.p_flat), c: num(f.cost_bps, 0) })],
+        [t("fc.col.range"), `${bps(f.q10_bps)} … ${bps(f.q90_bps)}, ${t("fc.dlg.median")} ${bps(f.q50_bps)}`],
+        [t("fc.dlg.uncertainty"), `${num(f.uncertainty, 1)} ${t("unit.bps")} · ${t("fc.dlg.entropy")} ${num(f.detail.entropy, 2)}`],
+        [t("fc.col.target"), when(f.target_ts)], [t("fc.col.reason"), (f.reasons || []).map((r) => `${codeLabel(CODE_OF[r] || r.toUpperCase())} — ${t("fr." + r)}`).join("; ") || t("ledger.passed")],
+        [t("fc.dlg.baseline"), `↑${pct(f.base_p_up, 0)} ↓${pct(f.base_p_down, 0)} ·${pct(f.base_p_flat, 0)}`],
+        [t("det.model"), `${f.model_version} · ${f.input_hash}`]]);
+    }
+    out.push(el("h4", { text: t("fc.dlg.holdout") }));
+    kvInto(out, ho.n ? [[t("fc.dlg.n"), `${ho.n} (${t("fc.dlg.independent")} ${ho.n_independent})`],
+      [t("fc.col.brier"), `${num(ho.brier, 4)} / ${num(ho.brier_base, 4)}`], [t("fc.dlg.gain"), `${num(ho.gain, 4)} [${num(ho.gain_ci95[0], 4)}…${num(ho.gain_ci95[1], 4)}], P ${pct(ho.p_better, 0)}`],
+      [t("fc.col.dir"), pct(ho.direction_hit, 1)], [t("fc.col.mae"), `${num(ho.mae_bps, 1)} / ${num(ho.mae_rw_bps, 1)} ${t("unit.bps")}`],
+      [t("fc.col.cover"), pct(ho.coverage_10_90, 0)], [t("fc.col.net"), ho.signals ? `${ho.signals}: ${bps(ho.avg_net_bps)}` : t("model.no_signal_passed")],
+      [t("fc.dlg.labels"), ho.label_share ? `↓${pct(ho.label_share.DOWN, 0)} ·${pct(ho.label_share.FLAT, 0)} ↑${pct(ho.label_share.UP, 0)}` : "—"]]
+      : [[t("fc.col.status"), tr.reason || t("fst." + (st.status || "not_trained"))]]);
+    out.push(el("h4", { text: t("fc.dlg.live") }));
+    kvInto(out, [[t("fc.dlg.issued"), `${st.issued || 0}`], [t("fc.dlg.resolved"), `${st.resolved || 0} · ${t("fc.dlg.missing")} ${st.missing_outcome || 0} · ${t("fc.dlg.pending")} ${st.pending || 0} · ${t("fc.dlg.stale")} ${st.stale || 0}`],
+      [t("fc.col.brier"), isNum(lv.brier) ? `${num(lv.brier, 4)} / ${num(lv.brier_base, 4)}` : "—"], [t("fc.col.dir"), pct(lv.direction_hit, 1)],
+      [t("fc.dlg.drift"), st.drift ? `PSI ${num(st.drift.max_psi, 2)}${st.drift.shifted ? " — " + t("fc.dlg.shifted") : ""} (${st.drift.top.map((x) => x[0]).join(", ")})` : "—"]]);
+    const recent = (S.serverForecasts[key] || []).filter((r) => r.resolved_ms).slice(0, 12);
+    if (recent.length) out.push(el("div", { class: "table-scroll" }, el("table", { class: "tbl cards" },
+      el("thead", {}, el("tr", {}, ...[t("fc.col.made"), t("fc.col.decision"), t("fc.dlg.median"), t("fc.dlg.actual"), t("fc.dlg.source")].map((x) => el("th", { text: x })))),
+      el("tbody", {}, ...recent.map((r) => el("tr", {}, el("td", { "data-label": t("fc.col.made"), text: when(r.created_ms) }), el("td", { "data-label": t("fc.col.decision"), text: r.decision }),
+        el("td", { class: "num", "data-label": t("fc.dlg.median"), text: bps(r.q50_bps) }), el("td", { class: "num", "data-label": t("fc.dlg.actual"), text: r.resolution_source === "missing" ? t("fc.dlg.no_outcome") : bps(r.actual_bps) }),
+        el("td", { "data-label": t("fc.dlg.source"), text: r.resolution_source || "" })))))));
+    $("fcDialogBody").replaceChildren(...out);
+    $("fcDialog").showModal();
+  }
+  function kvInto(out, pairs) { out.push(el("dl", { class: "kv detail-kv" }, ...pairs.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v == null ? "—" : String(v) })]))); }
+
   function openPrediction(r) {
     $("predDialogTitle").textContent = `${r.symbol} ${r.timeframe} · ${r.prediction}`;
     const hb = r.horizon_bars || 4;
@@ -890,6 +970,7 @@
     $("settingsForm").onsubmit = (e) => { e.preventDefault(); saveSettings(); };
     $("settingsCancel").onclick = () => $("settingsDialog").close();
     $("predDialogClose").onclick = () => $("predDialog").close();
+    $("fcDialogClose").onclick = () => $("fcDialog").close();
     $("probeBtn").onclick = runProbe;
     $("newsBtn").onclick = () => (S.mode === "server" ? fetchServer(true) : fetchNewsLocal(true));
     $("learnBtn").hidden = hasServer; $("retrainBtn").hidden = hasServer;

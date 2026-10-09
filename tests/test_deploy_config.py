@@ -72,3 +72,20 @@ def test_service_healthcheck_script(monkeypatch, tmp_path):
     db.heartbeat("predictor")
     assert run("service", "predictor", "60").returncode == 0
     assert run("api").returncode == 1  # nothing listening in the test
+
+
+def test_oracle_installer_is_safe_and_complete():
+    """The one-command server installer: valid bash, no secrets inside, token only into .env (mode 600),
+    API on localhost, continuous mode, state continued from the data branch."""
+    import subprocess
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[1] / "deploy" / "oracle" / "install.sh"
+    src = p.read_text()
+    assert subprocess.run(["bash", "-n", str(p)]).returncode == 0
+    for need in ("BACKEND_MODE continuous", "BIND_ADDRESS 127.0.0.1", "chmod 600 .env", "docker compose up -d --build",
+                 "archive FETCH_HEAD state", "read -r -s"):
+        assert need in src, need
+    assert "ghp_" not in src and "github_pat_" not in src
+    compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+    for svc in ("collector:", "predictor:", "forecaster:", "learner:", "publisher:", "backup:", "news:"):
+        assert svc in compose, svc

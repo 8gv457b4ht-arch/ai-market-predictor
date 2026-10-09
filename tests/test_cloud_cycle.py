@@ -179,3 +179,13 @@ def test_cycle_waits_for_candle_close_and_records_health(monkeypatch, tmp_path):
     m = st["models"]["BTC/USDT|15m|h4"]
     assert m["baseline_test"] and "passed" in m["baseline_test"] and "gaps" in m
     assert st["health"]["notifications"]["channels"] == {"ntfy": False, "telegram": False}
+    # forward-looking forecasts were issued while the streams were open, before their target time
+    rows = db.query("SELECT * FROM forecasts")
+    assert rows and all(r["data_ts_ms"] <= r["created_ms"] < r["target_ts"] for r in rows), len(rows)
+    assert {r["horizon_sec"] for r in rows} >= {3600, 14400}  # hours horizons learned on 15m / 1h candles
+    assert db.scalar("SELECT COUNT(*) FROM price_seconds WHERE exchange='okx'") > 0  # 1-second bars of the model exchange
+    assert db.scalar("SELECT COUNT(*) FROM price_seconds WHERE exchange='bybit'") == 0
+    fc = st["forecasts"]
+    assert len(fc["horizons"]) == 14 and fc["stats"]["BTC/USDT|f3600"]["issued"] >= 1
+    assert fc["stats"]["BTC/USDT|f60"]["status"] in ("not_trained", "collecting")  # no 1-minute candles in this fixture
+    assert (tmp_path / "public" / "forecasts.json").exists()

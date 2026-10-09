@@ -275,7 +275,7 @@ def test_notifications_conditions_staleness_and_no_duplicates(monkeypatch, tmp_p
     post = lambda url, data, headers: sent.append(json.loads(data))  # noqa: E731
     bar = 900_000
     now = int(time.time() * 1000)
-    fresh = (now // bar - 1) * bar  # closed less than one bar ago
+    fresh = now - bar - 60_000  # this candle closed one minute ago (independent of the wall clock)
     _pred_row(db, fresh, conf=0.7)
     _pred_row(db, fresh - bar, conf=0.6)                 # below the minimum confidence
     _pred_row(db, fresh - 8 * bar, conf=0.9)             # 2 h old: stale, must not be sent

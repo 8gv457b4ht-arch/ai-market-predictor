@@ -48,6 +48,11 @@ def main() -> int:
     if s.primary_exchange == "auto":
         s.primary_exchange = db.get_state("primary_exchange") or "binance"
     pred = Predictor(db, s)
+    from backend.app.cloud.cycle import ForecastTicker
+    ticker = ForecastTicker(db, s, s.primary_exchange) if s.forecast_enabled else None
+    if ticker is not None:
+        from backend.app.forecast.train import run_training
+        print("forecast training:", json.dumps(run_training(db, s, 600))[:2000], flush=True)
     samples: dict[str, list[int]] = {ex: [] for ex in s.exchanges}
     made: list[dict] = []
     t_end = time.time() + a.minutes * 60
@@ -64,6 +69,8 @@ def main() -> int:
                     and len(rows) == len(s.symbols)
                 samples[ex].append(int(live))
             out = await asyncio.to_thread(pred.run_once)
+            if ticker is not None:
+                await asyncio.to_thread(ticker)
             for k, v in out.items():
                 if v.get("status") == "predicted":
                     made.append({"key": k, "delay": v["gate"]["decision_delay_sec"], "prediction": v["prediction"],
@@ -75,7 +82,18 @@ def main() -> int:
     streams = {r["exchange"]: r for r in db.query(
         "SELECT exchange, SUM(reconnects) AS reconnects, SUM(gaps) AS gaps, SUM(duplicates) AS duplicates, "
         "SUM(invalid) AS invalid, SUM(stale_events) AS stale, MAX(ABS(clock_skew_ms)) AS skew FROM stream_status GROUP BY exchange")}
-    report = {"minutes": a.minutes, "exchanges": {}, "predictions": len(made),
+    fstats = {}
+    if ticker is not None:
+        ticker.save()
+        for k, v in ticker.f.stats().items():
+            lv = v.get("live") or {}
+            fstats[k] = {"status": v.get("status"), "issued": v.get("issued"), "resolved": v.get("resolved"),
+                         "missing": v.get("missing_outcome"), "stale": v.get("stale"), "brier_gain": lv.get("brier_gain"),
+                         "direction_hit": lv.get("direction_hit")}
+        lag = db.query_one("SELECT AVG(created_ms - data_ts_ms) AS a, MAX(created_ms - data_ts_ms) AS m, "
+                           "SUM(target_ts <= created_ms) AS bad FROM forecasts")
+        fstats["_input_age_ms"] = {"avg": lag["a"], "max": lag["m"], "target_not_in_future": lag["bad"]}
+    report = {"minutes": a.minutes, "exchanges": {}, "predictions": len(made), "forecasts": fstats,
               "decision_delay_sec": {"median": statistics.median([m["delay"] for m in made]) if made else None,
                                      "max": max([m["delay"] for m in made]) if made else None},
               "by_prediction": {p: sum(1 for m in made if m["prediction"] == p) for p in {m["prediction"] for m in made}}}
@@ -94,6 +112,16 @@ def main() -> int:
               f"gaps {r['gaps']}, stale {r['stale']}, max skew {r['skew']} ms")
     print(f"::notice title=soak predictions::{len(made)} predictions (≈{expected} closes expected), "
           f"delay median {report['decision_delay_sec']['median']} s, max {report['decision_delay_sec']['max']} s, {report['by_prediction']}")
+    if fstats:
+        issued = sum((v.get("issued") or 0) for k, v in fstats.items() if not k.startswith("_"))
+        resolved = sum((v.get("resolved") or 0) for k, v in fstats.items() if not k.startswith("_"))
+        missing = sum((v.get("missing") or 0) for k, v in fstats.items() if not k.startswith("_"))
+        print(f"::notice title=soak forecasts::issued {issued}, checked {resolved}, outcome missing {missing}, "
+              f"input age avg {fstats['_input_age_ms']['avg']} ms max {fstats['_input_age_ms']['max']} ms, "
+              f"target not in future: {fstats['_input_age_ms']['target_not_in_future']}")
+        for k, v in fstats.items():
+            if not k.startswith("_") and v.get("issued"):
+                print(f"::notice title=soak {k}::{json.dumps(v)}")
     if os.getenv("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("## Continuous soak test (real data)\n\n```json\n" + text + "\n```\n")

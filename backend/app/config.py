@@ -149,6 +149,15 @@ class Settings:
     close_settle_sec: float = field(default_factory=lambda: _float("CLOSE_SETTLE_SEC", 6))
     source_checks_retention_days: float = field(default_factory=lambda: _float("SOURCE_CHECKS_RETENTION_DAYS", 30))
 
+    # --- multi-horizon forecasts (5 s ... 1 d) --------------------------------
+    forecast_enabled: bool = field(default_factory=lambda: _bool("FORECAST_ENABLED", True))
+    forecast_1m_bars: int = field(default_factory=lambda: _int("FORECAST_1M_BARS", 43200))  # 30 days of 1-minute candles
+    forecast_train_budget_sec: float = field(default_factory=lambda: _float("FORECAST_TRAIN_BUDGET_SEC", 240))
+    second_bars_retention_hours: float = field(default_factory=lambda: _float("SECOND_BARS_RETENTION_HOURS", 48))
+    short_forecast_retention_days: float = field(default_factory=lambda: _float("SHORT_FORECAST_RETENTION_DAYS", 14))
+    # multiply every horizon's refresh interval (the scheduled GitHub mode uses 4 to keep its stored state small)
+    forecast_refresh_scale: float = field(default_factory=lambda: _float("FORECAST_REFRESH_SCALE", 1))
+
     # --- backup ------------------------------------------------------------
     backup_interval_sec: float = field(default_factory=lambda: _float("BACKUP_INTERVAL_SEC", 21600))
     backup_keep: int = field(default_factory=lambda: _int("BACKUP_KEEP", 14))

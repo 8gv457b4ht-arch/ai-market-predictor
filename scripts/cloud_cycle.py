@@ -32,6 +32,10 @@ def main() -> int:
     # GitHub starts scheduled runs late; wait (at most 16 min) for the next 15m close and predict on time
     os.environ.setdefault("WAIT_CLOSE_MAX_SEC", "960")
     os.environ.setdefault("CONTROL_DIR", str(ROOT / "control"))
+    # the whole state is pushed to git after every run: fewer short-horizon rows and 1-second bars than a server keeps
+    os.environ.setdefault("FORECAST_REFRESH_SCALE", "4")
+    os.environ.setdefault("SHORT_FORECAST_RETENTION_DAYS", "3")
+    os.environ.setdefault("SECOND_BARS_RETENTION_HOURS", "24")
     from backend.app.cloud.cycle import run_cycle
     from backend.app.cloud.health import ensure_database, restore_latest_good, sqlite_check
     from backend.app.config import get_settings

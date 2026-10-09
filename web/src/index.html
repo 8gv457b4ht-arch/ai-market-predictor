@@ -119,6 +119,13 @@
     <details class="sub-block"><summary data-i18n="model.versions_title">Версии модели</summary><div class="table-scroll"><table class="tbl cards" id="versions"></table></div></details>
   </section>
 
+  <section class="panel horizons" aria-labelledby="fcTitle">
+    <div class="panel-head"><h3 id="fcTitle" data-i18n="fc.title">Прогнозы на будущее по горизонтам</h3></div>
+    <p class="small muted" data-i18n="fc.intro"></p>
+    <p class="small muted" id="fcNote"></p>
+    <div class="table-scroll"><table class="tbl cards" id="fcTable"></table></div>
+  </section>
+
   <section class="panel ledger" aria-labelledby="ledgerTitle">
     <div class="panel-head"><h3 id="ledgerTitle" data-i18n="ledger.title">Журнал прогнозов</h3>
       <button type="button" class="btn small ghost" id="exportBtn" data-i18n="ledger.export">Экспорт CSV</button></div>
@@ -171,6 +178,10 @@
     <div class="row between"><button type="button" class="btn small danger" id="resetBtn" data-i18n="set.reset">Удалить локальные данные</button>
       <div class="row"><button type="button" class="btn ghost" id="settingsCancel" data-i18n="common.cancel">Отмена</button><button type="submit" class="btn" data-i18n="common.save">Сохранить</button></div></div>
   </form>
+</dialog>
+<dialog id="fcDialog" class="wide">
+  <div class="row between dlg-head"><h3 id="fcDialogTitle"></h3><button type="button" class="btn small ghost" id="fcDialogClose" data-i18n="common.close">Закрыть</button></div>
+  <div id="fcDialogBody"></div>
 </dialog>
 <dialog id="predDialog" class="wide">
   <div class="row between dlg-head"><h3 id="predDialogTitle"></h3><button type="button" class="btn small ghost" id="predDialogClose" data-i18n="common.close">Закрыть</button></div>

@@ -32,6 +32,8 @@ def _err(exc: BaseException) -> dict:
 
 
 def history_bars(settings: Settings, exchange: str, primary: str | None, tf: str) -> int:
+    if exchange == primary and tf == "1m" and settings.forecast_enabled:
+        return settings.forecast_1m_bars  # minute-horizon forecasts learn on 1-minute candles
     if exchange == primary:
         return settings.history_bars if tf in settings.predict_timeframes else settings.context_history_bars
     return 300
@@ -125,10 +127,13 @@ def choose_primary(db: Database, settings: Settings, rest_probe: dict) -> str | 
 
 
 async def sample_streams(db: Database, settings: Settings, seconds: float, during=None, connect=None,
-                         full: bool = False) -> dict:
+                         full: bool = False, tick=None) -> dict:
     """Run all exchange streams for up to `seconds` (exactly `seconds` with full=True, e.g. waiting for a
-    candle close), call `during()` while they are still live, then stop."""
-    agg = Aggregator(db, store_raw_trades=False)
+    candle close), call `during()` while they are still live, then stop. `tick()` runs about every 2 s
+    while the streams are open (forward-looking forecasts and their checks)."""
+    primary = settings.primary_exchange if settings.primary_exchange != "auto" else None
+    agg = Aggregator(db, store_raw_trades=False, second_bar_exchanges={primary} if primary else set())
+    tick_errors = 0
     for ex in settings.exchanges:
         for sym in settings.symbols:
             agg.state(ex, sym)
@@ -143,7 +148,14 @@ async def sample_streams(db: Database, settings: Settings, seconds: float, durin
         done = all(st.stats.last_trade_ms and st.book.initialized for st in agg.states.values())
         if done and time.monotonic() - t0 >= min_wait and not full:
             break
-        if full and int(time.monotonic() - t0) % 30 == 0:
+        if tick is not None and int(time.monotonic() - t0) % 2 == 0:
+            await asyncio.to_thread(agg.flush)  # newest 1-second bars visible to the forecaster
+            try:
+                await asyncio.to_thread(tick)
+            except Exception:  # noqa: BLE001 - forecasting problems never stop data collection
+                tick_errors += 1
+                log.exception("forecast tick failed")
+        elif full and int(time.monotonic() - t0) % 30 == 0:
             await asyncio.to_thread(agg.flush)  # long waits: keep flow bars / book state current in the DB
     await asyncio.to_thread(agg.flush)
     during_result = await asyncio.to_thread(during) if during else None
@@ -168,7 +180,7 @@ async def sample_streams(db: Database, settings: Settings, seconds: float, durin
                    "kind": None if verified else (s.last_error_kind or "no_data"), "symbols": syms}
     stop.set()
     await asyncio.gather(*tasks, return_exceptions=True)
-    return {"streams": out, "during": during_result, "seconds": round(time.monotonic() - t0, 1)}
+    return {"streams": out, "during": during_result, "seconds": round(time.monotonic() - t0, 1), "tick_errors": tick_errors}
 
 
 def record_source_checks(db: Database, rest_probe: dict, ws_streams: dict) -> None:
@@ -232,6 +244,40 @@ def refresh_tails(db: Database, settings: Settings, primary: str) -> dict:
     return out
 
 
+class ForecastTicker:
+    """Called every ~2 s while streams are open: keeps 1m/15m/1h candles current right after each close,
+    issues due forecasts and checks forecasts whose horizon has passed."""
+    def __init__(self, db: Database, settings: Settings, primary: str):
+        from ..forecast.engine import Forecaster
+        self.db, self.s, self.primary = db, settings, primary
+        self.f = Forecaster(db, settings)
+        self.f.missing = db.get_state("forecast_missing") or {}
+        self.fetched: dict[str, int] = {}
+        self.last_resolve = 0
+        self.made = 0
+
+    def __call__(self) -> None:
+        now = now_ms()
+        for tf in ("1m", "15m", "1h"):
+            bar = TIMEFRAME_MS[tf]
+            close = now - now % bar
+            if now - close >= 3_000 and self.fetched.get(tf, 0) < close:  # a few seconds after each close
+                self.fetched[tf] = close
+                for sym in self.s.symbols:
+                    try:
+                        upsert_candles(self.db, self.primary, sym, tf, rest.fetch_klines(self.primary, sym, tf, 3))
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("candle refresh %s %s: %s", sym, tf, exc)
+        self.made += self.f.tick(now)["made"]
+        if now - self.last_resolve >= 10_000:
+            self.last_resolve = now
+            self.f.resolve(now)
+
+    def save(self) -> dict:
+        self.db.set_state("forecast_missing", self.f.missing)
+        return {"made": self.made, **self.f.resolve()}
+
+
 def prune_models(db: Database, settings: Settings, keep_archived: int = 2) -> dict:
     """Delete model files that are no longer needed (metrics stay in the registry)."""
     from ..learning.registry import resolve_path
@@ -291,8 +337,10 @@ def run_cycle(db: Database, settings: Settings, connect=None, learn: bool = True
     if primary:
         settings.primary_exchange = primary
     predictor = Predictor(db, settings) if primary else None
+    ticker = ForecastTicker(db, settings, primary) if (primary and settings.forecast_enabled) else None
     ws = step("ws", lambda: asyncio.run(sample_streams(db, settings, settings.ws_sample_sec,
-                                                       during=predictor.run_once if predictor else None, connect=connect))) or {}
+                                                       during=predictor.run_once if predictor else None, connect=connect,
+                                                       tick=ticker))) or {}
     report["predictions"] = ws.get("during")
     probes = {ex: {"rest": rest_probe.get(ex, {}), "ws": (ws.get("streams") or {}).get(ex, {})} for ex in settings.exchanges}
     db.set_state("exchange_probes", {"ts_ms": now_ms(), "primary": primary, "probes": probes})
@@ -300,6 +348,10 @@ def run_cycle(db: Database, settings: Settings, connect=None, learn: bool = True
     if learn and primary:
         report["learning"] = step("learning", lambda: run_learning_once(db, settings))
         step("baseline_tests_after_learning", lambda: baseline_tests(db, settings))
+        if settings.forecast_enabled:
+            from ..forecast.train import run_training
+            report["forecast_training"] = step("forecast_training",
+                                               lambda: run_training(db, settings, settings.forecast_train_budget_sec))
     if news:
         report["news"] = step("news", lambda: run_news_once(db, settings))
     # Scheduled mode: GitHub starts runs 5-13 min late. Instead of predicting late, keep the streams open
@@ -311,12 +363,14 @@ def run_cycle(db: Database, settings: Settings, connect=None, learn: bool = True
         def at_close():
             return {"tails": refresh_tails(db, settings, primary), "predictions": predictor.run_once()}
         ws2 = step("ws_close", lambda: asyncio.run(sample_streams(db, settings, wait, during=at_close,
-                                                                  connect=connect, full=True))) or {}
+                                                                  connect=connect, full=True, tick=ticker))) or {}
         report["predictions_at_close"] = (ws2.get("during") or {}).get("predictions")
         if ws2.get("streams"):
             step("source_checks_close", lambda: record_source_checks(db, {}, ws2["streams"]))
             probes = {ex: {"rest": rest_probe.get(ex, {}), "ws": ws2["streams"].get(ex, {})} for ex in settings.exchanges}
             db.set_state("exchange_probes", {"ts_ms": now_ms(), "primary": primary, "probes": probes})
+    if ticker is not None:
+        report["forecasts"] = step("forecasts", ticker.save)
     notifier = Notifier(db, settings)
     if notifier.enabled:
         step("notify", lambda: (notifier.outages(probes), notifier.predictions(), notifier.promotions(),

@@ -22,10 +22,33 @@ from typing import Any, Iterable, Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Columns added after the first release: (table, column, type). Applied to existing databases.
 MIGRATIONS = [("predictions", "gate_json", "TEXT")]
+
+# Append-only ledgers (SQLite): what was predicted can never be changed afterwards; the outcome columns
+# can be written exactly once. Checked by tests (no retroactive changes).
+SQLITE_TRIGGERS = [
+    """CREATE TRIGGER IF NOT EXISTS forecasts_append_only BEFORE UPDATE ON forecasts
+       WHEN OLD.resolved_ms IS NOT NULL
+         OR NEW.forecast_id IS NOT OLD.forecast_id OR NEW.created_ms IS NOT OLD.created_ms
+         OR NEW.data_ts_ms IS NOT OLD.data_ts_ms OR NEW.symbol IS NOT OLD.symbol OR NEW.exchange IS NOT OLD.exchange
+         OR NEW.horizon_sec IS NOT OLD.horizon_sec OR NEW.target_ts IS NOT OLD.target_ts
+         OR NEW.ref_price IS NOT OLD.ref_price OR NEW.p_up IS NOT OLD.p_up OR NEW.p_down IS NOT OLD.p_down
+         OR NEW.p_flat IS NOT OLD.p_flat OR NEW.q10_bps IS NOT OLD.q10_bps OR NEW.q50_bps IS NOT OLD.q50_bps
+         OR NEW.q90_bps IS NOT OLD.q90_bps OR NEW.decision IS NOT OLD.decision OR NEW.reasons IS NOT OLD.reasons
+         OR NEW.model_version IS NOT OLD.model_version OR NEW.features_json IS NOT OLD.features_json
+         OR NEW.input_hash IS NOT OLD.input_hash OR NEW.base_p_up IS NOT OLD.base_p_up
+       BEGIN SELECT RAISE(ABORT, 'forecasts are append-only: the prediction cannot be changed'); END""",
+    """CREATE TRIGGER IF NOT EXISTS predictions_append_only BEFORE UPDATE ON predictions
+       WHEN OLD.resolved_ms IS NOT NULL
+         OR NEW.created_ms IS NOT OLD.created_ms OR NEW.candle_ts IS NOT OLD.candle_ts OR NEW.price IS NOT OLD.price
+         OR NEW.prediction IS NOT OLD.prediction OR NEW.p_up IS NOT OLD.p_up OR NEW.p_down IS NOT OLD.p_down
+         OR NEW.p_flat IS NOT OLD.p_flat OR NEW.model_version IS NOT OLD.model_version
+         OR NEW.gate_reasons IS NOT OLD.gate_reasons OR NEW.features_json IS NOT OLD.features_json
+       BEGIN SELECT RAISE(ABORT, 'predictions are append-only: the prediction cannot be changed'); END""",
+]
 
 # {pk} -> autoincrement primary key; types chosen to be valid in both engines.
 SCHEMA = [
@@ -117,6 +140,29 @@ SCHEMA = [
         symbol TEXT NOT NULL, exchange TEXT NOT NULL, timeframe TEXT NOT NULL, candle_ts BIGINT NOT NULL,
         detected_ms BIGINT NOT NULL, reason TEXT,
         PRIMARY KEY(symbol, exchange, timeframe, candle_ts))""",
+    # 1-second price/flow bars from the live trade stream (seconds horizons, exact outcome prices)
+    """CREATE TABLE IF NOT EXISTS price_seconds(
+        exchange TEXT NOT NULL, symbol TEXT NOT NULL, ts_sec BIGINT NOT NULL,
+        open DOUBLE PRECISION NOT NULL, high DOUBLE PRECISION NOT NULL, low DOUBLE PRECISION NOT NULL,
+        close DOUBLE PRECISION NOT NULL, buy_volume DOUBLE PRECISION NOT NULL, sell_volume DOUBLE PRECISION NOT NULL,
+        trades BIGINT NOT NULL, last_trade_ms BIGINT NOT NULL,
+        PRIMARY KEY(exchange, symbol, ts_sec))""",
+    # forward-looking forecasts for many horizons; append-only (see TRIGGERS)
+    """CREATE TABLE IF NOT EXISTS forecasts(
+        forecast_id TEXT PRIMARY KEY, created_ms BIGINT NOT NULL, data_ts_ms BIGINT NOT NULL,
+        symbol TEXT NOT NULL, exchange TEXT NOT NULL, horizon_sec INTEGER NOT NULL, target_ts BIGINT NOT NULL,
+        ref_price DOUBLE PRECISION NOT NULL, ref_source TEXT NOT NULL,
+        p_up DOUBLE PRECISION, p_down DOUBLE PRECISION, p_flat DOUBLE PRECISION, cost_bps DOUBLE PRECISION NOT NULL,
+        q10_bps DOUBLE PRECISION, q50_bps DOUBLE PRECISION, q90_bps DOUBLE PRECISION, uncertainty DOUBLE PRECISION,
+        decision TEXT NOT NULL, reasons TEXT NOT NULL, model_version TEXT, model_status TEXT,
+        base_p_up DOUBLE PRECISION, base_p_down DOUBLE PRECISION, base_p_flat DOUBLE PRECISION,
+        base_q50_bps DOUBLE PRECISION, features_json TEXT, input_hash TEXT NOT NULL, detail_json TEXT,
+        resolved_ms BIGINT, resolution_source TEXT, resolution_lag_ms BIGINT, actual_price DOUBLE PRECISION,
+        actual_bps DOUBLE PRECISION, actual_class TEXT, brier DOUBLE PRECISION, brier_base DOUBLE PRECISION,
+        logloss DOUBLE PRECISION, logloss_base DOUBLE PRECISION, abs_err_bps DOUBLE PRECISION,
+        abs_err_rw_bps DOUBLE PRECISION, in_range INTEGER, net_bps DOUBLE PRECISION)""",
+    "CREATE INDEX IF NOT EXISTS ix_forecasts_key ON forecasts(symbol, horizon_sec, created_ms)",
+    "CREATE INDEX IF NOT EXISTS ix_forecasts_pending ON forecasts(resolved_ms, target_ts)",
     """CREATE TABLE IF NOT EXISTS system_state(
         key TEXT PRIMARY KEY, value_json TEXT, updated_ms BIGINT NOT NULL)""",
 ]
@@ -164,6 +210,9 @@ class Database:
             for table, col, typ in MIGRATIONS:
                 if col not in self.columns(table):
                     self.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            if self.dialect == "sqlite":
+                for stmt in SQLITE_TRIGGERS:
+                    self.execute(stmt)
             self.set_state("schema_version", SCHEMA_VERSION)
 
     def columns(self, table: str) -> set[str]:
@@ -275,6 +324,11 @@ class Database:
             "candles_1m": ("DELETE FROM candles WHERE timeframe='1m' AND open_ts < ?", t - int(settings.candles_1m_retention_days * d)),
             "news_events": ("DELETE FROM news_events WHERE published_ms < ?", t - int(settings.news_retention_days * d)),
             "learning_events": ("DELETE FROM learning_events WHERE ts_ms < ?", t - 180 * d),
+            "price_seconds": ("DELETE FROM price_seconds WHERE ts_sec < ?",
+                              (t - int(getattr(settings, "second_bars_retention_hours", 48) * h)) // 1000),
+            # seconds/minutes forecasts are many: raw rows for 14 days, their statistics stay in the exports
+            "forecasts_short": ("DELETE FROM forecasts WHERE horizon_sec <= 300 AND created_ms < ?",
+                                t - int(getattr(settings, "short_forecast_retention_days", 14) * d)),
             "source_checks": ("DELETE FROM source_checks WHERE ts_ms < ?",
                               t - int(getattr(settings, "source_checks_retention_days", 30) * d)),
         }

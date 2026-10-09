@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#EEF1F4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101A26" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>AI Market Predictor</title>
+<style>/*CSS*/</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>AI Market Predictor</h1>
+    <p class="sub"><span id="liveDot" class="live-dot st-bad"></span><span id="liveText">OFFLINE</span> · read-only research, no orders</p>
+  </div>
+  <div class="controls">
+    <label>Asset <select id="symbol"></select></label>
+    <label>Timeframe <select id="tf"></select></label>
+    <button type="button" id="refreshBtn" class="btn">Refresh</button>
+    <button type="button" id="settingsBtn" class="btn ghost">Settings</button>
+  </div>
+</header>
+<p id="phase" class="phase" hidden></p>
+<p id="modeNote" class="mode-note small"></p>
+
+<section id="welcome" class="welcome" hidden>
+  <h2>Start the predictor</h2>
+  <p>Press Start and this page connects directly from your browser to the public market data of Binance, Bybit and OKX. No account or key is needed for prices, candles, trades and order books.</p>
+  <p>The first model is trained on real price history in your browser. It takes about a minute. Predictions, models and results are stored in this browser.</p>
+  <p class="small muted">Optional: add an Anthropic API key in Settings for AI news analysis.</p>
+  <div class="row"><button type="button" class="btn big" id="startBtn">Start</button><button type="button" class="btn ghost" id="welcomeSettings">Settings</button></div>
+</section>
+
+<main class="layout">
+  <section class="readout" aria-labelledby="assetName">
+    <h2 id="assetName">—</h2>
+    <div class="price-row"><div class="price" id="price">—</div><div class="change" id="change"></div></div>
+    <p class="muted small" id="priceSource"></p>
+    <div class="signal-block">
+      <div class="signal-label">AI prediction <span class="muted" id="horizon"></span></div>
+      <div class="signal" id="signal" data-state="none">—</div>
+      <div class="tribar" role="img" aria-label="Probabilities">
+        <div class="seg down" id="segDown"></div><div class="seg flat" id="segFlat"></div><div class="seg up" id="segUp"></div>
+        <div class="threshold" id="threshold"></div>
+      </div>
+      <div class="probs">
+        <div><span class="dot down"></span>Down <b id="pDown">—</b></div>
+        <div><span class="dot flat"></span>Flat <b id="pFlat">—</b></div>
+        <div><span class="dot up"></span>Up <b id="pUp">—</b></div>
+      </div>
+      <dl class="facts">
+        <div><dt>Confidence</dt><dd id="confidence">—</dd></div>
+        <div><dt>Market regime</dt><dd id="regime">—</dd></div>
+        <div><dt>Data quality</dt><dd id="quality">—</dd></div>
+        <div><dt>News impact</dt><dd id="newsImpact">—</dd></div>
+        <div><dt>Spread</dt><dd id="spread">—</dd></div>
+        <div><dt>Book imbalance</dt><dd id="imbalance">—</dd></div>
+      </dl>
+      <p id="reasons" class="reasons"></p>
+      <p id="predMeta" class="small muted"></p>
+    </div>
+  </section>
+
+  <section class="charts" aria-label="Live chart">
+    <div class="tabs" role="tablist" id="chartTabs">
+      <button role="tab" data-chart="price" aria-selected="true">Price</button>
+      <button role="tab" data-chart="volume" aria-selected="false">Volume</button>
+      <button role="tab" data-chart="cvd" aria-selected="false">CVD</button>
+      <button role="tab" data-chart="book" aria-selected="false">Order book</button>
+      <button role="tab" data-chart="ind" aria-selected="false">Indicators</button>
+      <label class="tab-select">Exchange <select id="bookEx"></select></label>
+    </div>
+    <div class="chart-wrap"><canvas id="chart"></canvas><div class="chart-tip" id="chartTip" hidden></div><p class="chart-empty" id="chartEmpty" hidden></p></div>
+    <p class="muted small" id="chartNote"></p>
+  </section>
+
+  <section class="panel system" aria-labelledby="sysTitle">
+    <div class="panel-head"><h3 id="sysTitle">System status</h3></div>
+    <dl class="status-grid" id="statusGrid"></dl>
+    <div class="table-scroll"><table class="tbl" id="exTable"></table></div>
+    <details class="sub-block" open><summary>Connection test from this device</summary>
+      <p class="small muted">Checks REST candles and timestamp-verified WebSocket data from each exchange directly from this phone or computer, and explains failures (region block, CORS, network, timeout, rate limit).</p>
+      <button type="button" class="btn small" id="probeBtn">Test connections</button>
+      <div class="table-scroll"><table class="tbl" id="probeTable"></table></div>
+    </details>
+  </section>
+
+  <section class="panel news" aria-labelledby="newsTitle">
+    <div class="panel-head"><h3 id="newsTitle">News intelligence</h3><button type="button" class="btn small" id="newsBtn">Refresh news</button></div>
+    <p class="muted small" id="newsStatus"></p>
+    <ul class="news-list" id="newsList"></ul>
+  </section>
+
+  <section class="panel model" aria-labelledby="modelTitle">
+    <div class="panel-head"><h3 id="modelTitle">Model</h3>
+      <div class="row"><button type="button" class="btn small" id="learnBtn">Run learning cycle</button><button type="button" class="btn small ghost" id="retrainBtn">Retrain baseline</button></div></div>
+    <dl class="kv" id="modelKv"></dl>
+    <details class="sub-block" open><summary>Why NO TRADE</summary><div id="whyNoTrade"></div></details>
+    <details class="sub-block"><summary>Backtest with costs</summary>
+      <form class="bt-form" id="btForm">
+        <label>Fee, bps/side <input type="number" id="btFee" step="0.5" min="0"></label>
+        <label>Slippage, bps/side <input type="number" id="btSlip" step="0.5" min="0"></label>
+        <label>Spread, bps <input type="number" id="btSpread" step="0.5" min="0"></label>
+        <label>Latency, ms <input type="number" id="btLat" step="100" min="0"></label>
+        <label>Threshold <input type="number" id="btThr" step="0.01" min="0.34" max="0.99"></label>
+        <button type="submit" class="btn small">Run backtest</button>
+      </form>
+      <dl class="kv" id="btResult"></dl>
+    </details>
+    <details class="sub-block"><summary>Model versions</summary><div class="table-scroll"><table class="tbl" id="versions"></table></div></details>
+  </section>
+
+  <section class="panel ledger" aria-labelledby="ledgerTitle">
+    <div class="panel-head"><h3 id="ledgerTitle">Prediction ledger</h3><div class="row"><span class="muted small" id="ledgerStats"></span>
+      <label class="tab-select">Show <select id="ledgerFilter"><option value="all">All</option><option value="signals">UP/DOWN only</option><option value="resolved">Resolved</option><option value="notrade">NO TRADE</option></select></label>
+      <button type="button" class="btn small ghost" id="exportBtn">Export CSV</button></div></div>
+    <div class="table-scroll"><table class="tbl" id="ledger"></table></div>
+    <button type="button" class="btn small ghost" id="moreBtn" hidden>Show more</button>
+  </section>
+</main>
+
+<dialog id="settingsDialog">
+  <form id="settingsForm">
+    <h3>Settings</h3>
+    <p class="small muted">Market data needs no keys. Keys are stored only in this browser and sent only to the service they belong to.</p>
+    <fieldset><legend>Local mode: News AI</legend>
+      <label>Anthropic API key <input type="password" id="setAnthropicKey" autocomplete="off" placeholder="sk-ant-…"></label>
+      <div class="row"><button type="button" class="btn small ghost" id="keyTestBtn">Test key</button><span id="keyTest" class="small muted"></span></div>
+      <label>Claude model <input type="text" id="setAnthropicModel"></label>
+      <label>News feed API key (optional, CoinDesk / CryptoCompare) <input type="password" id="setNewsKey" autocomplete="off"></label>
+    </fieldset>
+    <fieldset><legend>Notifications</legend>
+      <label class="check"><input type="checkbox" id="setNotify"> Browser notifications while this page is open</label>
+      <label class="check"><input type="checkbox" id="setNotifySignals"> New UP/DOWN predictions</label>
+      <label class="check"><input type="checkbox" id="setNotifyAll"> Every prediction, including NO TRADE</label>
+      <label class="check"><input type="checkbox" id="setNotifyOutages"> Exchange data source down or back</label>
+      <p class="small muted">For 24/7 phone alerts, the backend sends to ntfy or Telegram (set up once in the GitHub repository secrets, see the README).</p>
+    </fieldset>
+    <fieldset id="localOnly"><legend>Local mode: market data and model</legend>
+      <label>Exchange for model history <select id="setPrimary"><option value="auto">Automatic (first reachable)</option><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label>
+      <div class="grid2">
+        <label>Confidence threshold <input type="number" id="setThreshold" step="0.01" min="0.34" max="0.95"></label>
+        <label>Minimum edge <input type="number" id="setEdge" step="0.01" min="0" max="0.9"></label>
+        <label>Horizon, bars <input type="number" id="setHorizon" step="1" min="1" max="24"></label>
+        <label>New labels before a challenger <input type="number" id="setMinLabels" step="10" min="100"></label>
+        <label>Fee, bps/side <input type="number" id="setFee" step="0.5" min="0"></label>
+        <label>Slippage, bps/side <input type="number" id="setSlip" step="0.5" min="0"></label>
+      </div>
+    </fieldset>
+    <div class="row between"><button type="button" class="btn small danger" id="resetBtn">Delete local data</button>
+      <div class="row"><button type="button" class="btn ghost" id="settingsCancel">Cancel</button><button type="submit" class="btn">Save</button></div></div>
+  </form>
+</dialog>
+<div class="confirm" id="confirmBox" hidden><p id="confirmText"></p><div class="row"><button type="button" class="btn ghost" id="confirmNo">Cancel</button><button type="button" class="btn danger" id="confirmYes">Confirm</button></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script id="amp-core">/*CORE*/</script>
+<script>/*CONNECTORS*/</script>
+<script>/*APP*/</script>
+</body>
+</html>

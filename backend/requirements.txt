@@ -1,0 +1,11 @@
+# Runtime dependencies. Exact versions = the versions the test suite was executed with
+# (Python 3.13). websockets/uvicorn extras could not be installed in the build sandbox
+# (no PyPI access) and are pinned to ranges; they are installed and tested in `docker build --target test`.
+starlette==1.6.0
+uvicorn[standard]==0.53.0
+websockets>=14,<17
+numpy==2.5.3
+pandas==3.0.5
+scipy==1.18.1
+scikit-learn==1.9.1
+joblib==1.6.0

@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+backups/
+logs/
+state/
+public/
+_site/
+web/dist/

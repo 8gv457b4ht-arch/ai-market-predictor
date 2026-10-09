@@ -215,3 +215,60 @@ label.check input { width: auto !important; }
 #probeBtn { margin: 6px 0 10px; }
 #moreBtn { margin-top: 10px; }
 #whyNoTrade p { margin: 6px 0; max-width: 90ch; }
+
+/* ---- stage 3: statuses, details, filters, mobile cards ---- */
+:root { --info: #2F6FB0; }
+@media (prefers-color-scheme: dark) { :root { --info: #7EB2EA; } }
+.st-info { color: var(--info); }
+.badge { display: inline-block; font-size: 0.78rem; letter-spacing: .02em; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; margin-right: 4px; }
+.status-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.status-grid .detail { margin-top: 2px; overflow-wrap: anywhere; }
+.filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 8px; }
+.filters label { display: grid; gap: 2px; font-size: 0.78rem; color: var(--ink-2); }
+.filters select { width: 100%; }
+.tbl tr.clickable { cursor: pointer; }
+.tbl tr.clickable:hover td, .tbl tr.clickable:focus-visible td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+code.raw { font-size: 0.78rem; color: var(--ink-2); overflow-wrap: anywhere; white-space: normal; }
+.factors { margin: 4px 0 0; padding-left: 18px; font-size: 0.85rem; }
+.factors li { margin: 3px 0; overflow-wrap: anywhere; }
+.detail-kv { margin-top: 10px; font-size: 0.85rem; }
+.changes { list-style: none; margin: 0; padding: 0; }
+.changes > li { padding: 10px 0; border-top: 1px solid var(--rule); }
+.changes > li:first-child { border-top: 0; }
+.changes .tbl { margin-top: 6px; }
+dialog.wide { max-width: min(760px, 96vw); width: 100%; }
+.dlg-head { margin: 0 0 8px; justify-content: space-between; flex-wrap: nowrap; }
+.dlg-head h3 { overflow-wrap: anywhere; }
+.controls select#lang { min-width: 7.5em; }
+#predDetails .kv { margin-top: 8px; }
+
+/* phones: tables become stacked cards (no horizontal page scroll, readable text, large tap targets) */
+@media (max-width: 640px) {
+  body { font-size: 16px; }
+  .top { padding: 12px 12px 10px; }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .controls label { font-size: 0.8rem; }
+  .controls .btn { width: 100%; }
+  .btn, select, input[type=number], input[type=password], input[type=text] { min-height: 44px; }
+  .btn.small { min-height: 40px; }
+  .tab-select select { min-height: 44px; }
+  .tab-select { margin-left: 0; }
+  .tabs button { min-height: 44px; padding: 8px 10px; }
+  .readout, .charts, .panel { padding: 12px; }
+  .signal { font-size: 2.8rem; }
+  .facts { grid-template-columns: 1fr 1fr; }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .kv dt { margin-top: 6px; }
+  .tbl.cards, .tbl.cards tbody, .tbl.cards tr, .tbl.cards td { display: block; width: 100%; white-space: normal; }
+  .tbl.cards thead { display: none; }
+  .tbl.cards tr { border: 1px solid var(--rule); border-radius: var(--radius-s); margin: 0 0 10px; padding: 6px 10px; }
+  .tbl.cards td { border: 0; padding: 3px 0; text-align: left !important; display: grid; grid-template-columns: minmax(96px, 40%) minmax(0, 1fr); gap: 8px; min-width: 0; }
+  .tbl.cards td::before { content: attr(data-label); color: var(--ink-2); font-size: 0.8rem; }
+  .tbl.cards td:not([data-label])::before { content: none; }
+  .tbl.cards td:not([data-label]) { display: block; }
+  .tbl td.wrap { min-width: 0; }
+  .table-scroll { overflow-x: visible; }
+  .filters { grid-template-columns: 1fr 1fr; }
+  dialog { padding: 14px; }
+  .status-grid { grid-template-columns: minmax(0, 1fr); }
+}

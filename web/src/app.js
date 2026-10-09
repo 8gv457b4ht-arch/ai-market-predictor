@@ -1,44 +1,77 @@
 /* AI Market Predictor - browser application.
- * Server mode (published site): predictions, ledger, models, learning and news come from the 24/7 backend
- *   (scheduled GitHub Actions job, JSON in the `data` branch). The browser adds live prices/order books.
+ * Server mode (published site): predictions, ledger, models, learning and news come from the backend
+ *   (scheduled GitHub Actions job or a continuous server, JSON in the `data` branch). The browser adds live prices/order books.
  * Local mode (file opened directly, or backend unreachable): everything runs in this browser.
+ * Every visible text comes from the translation dictionary (i18n.js); machine codes, tickers, API names and raw
+ * exchange messages are shown as they are, next to a translated explanation.
  */
 (function () {
   "use strict";
-  const A = window.AMP, C = window.AMPConnectors;
+  const A = window.AMP, C = window.AMPConnectors, I = window.AMPI18n, ST = window.AMPStatus;
+  const t = (k, p) => I.t(k, p);
   const SYMBOLS = ["BTC/USDT", "ETH/USDT"], EXCHANGES = ["binance", "bybit", "okx"], CONTEXT_TFS = ["15m", "1h", "4h", "1d"];
   const HISTORY = { "15m": 3000, "1h": 2000, "4h": 1000, "1d": 600 };
   const DEFAULTS = { started: false, primary: "auto", predictTfs: ["15m", "1h"], horizon: 4, threshold: 0.55, minEdge: 0.1, atrMult: 0.3,
     feeBps: 10, slippageBps: 2, spreadBps: 1, latencyMs: 500, minNewLabels: 300, minHoldout: 150, holdoutFraction: 0.5,
-    minLoglossGain: 0.002, bootstrapConfidence: 0.9, maxSpreadBps: 15, maxDivergenceBps: 40, minQuality: 0.7, newsHalfLife: 180,
-    anthropicKey: "", anthropicModel: "claude-haiku-5-5", newsKey: "", notifyEnabled: false, notifySignals: true, notifyAll: false, notifyOutages: true };
+    minLoglossGain: 0.002, bootstrapConfidence: 0.9, baselinePBetter: 0.95, maxSpreadBps: 15, maxDivergenceBps: 40, minQuality: 0.7, newsHalfLife: 180,
+    anthropicKey: "", anthropicModel: "claude-haiku-5-5", newsKey: "", notifyEnabled: false, notifySignals: true, notifyAll: false, notifyOutages: true,
+    notifyMinConf: 0, notifyMaxAgeMin: 10 };
   const $ = (id) => document.getElementById(id);
   const S = { mode: "detecting", server: null, serverErr: null, serverLedger: [], serverCandles: {}, lastServerFetch: 0, cfg: null,
     settings: { ...DEFAULTS }, primary: null, candles: {}, tickers: {}, streams: {}, registry: { versions: [], production: {} },
     models: {}, ledger: new Map(), news: [], newsStatus: { state: "NOT STARTED" }, jobs: [], training: null, learning: { lastRun: null, status: {} },
     lastPoll: null, pollError: null, historyErrors: {}, tab: "price", symbol: "BTC/USDT", tf: "15m", bookEx: "binance", dbOk: false,
-    prevGaps: {}, probe: null, ledgerFilter: "all", ledgerLimit: 50, seenPredictionIds: null, prevSourceOk: {} };
+    prevGaps: {}, probe: null, ledgerLimit: 50, prevSourceOk: {},
+    filter: { type: "all", symbol: "current", tf: "current", model: "all", period: "all" } };
 
   // ------------------------------------------------------------- helpers
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
-  const pct = (x, d = 1) => (isNum(x) ? (x * 100).toFixed(d) + "%" : "—");
-  const num = (x, d = 2) => (isNum(x) ? Number(x).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : "—");
-  const priceFmt = (x) => (isNum(x) ? Number(x).toLocaleString(undefined, { maximumFractionDigits: x >= 100 ? 2 : 4, minimumFractionDigits: x >= 100 ? 2 : 0 }) : "—");
-  const when = (ms) => (ms ? new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
-  function ago(ms) { if (!ms) return "never"; const s = (Date.now() - ms) / 1000; if (s < 90) return Math.round(s) + " s ago"; if (s < 5400) return Math.round(s / 60) + " min ago"; if (s < 172800) return Math.round(s / 3600) + " h ago"; return Math.round(s / 86400) + " d ago"; }
-  function el(tag, attrs, ...kids) { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v); } kids.forEach((k) => k != null && e.append(k)); return e; }
-  function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 4500); }
+  const loc = () => I.locale();
+  const pct = (x, d = 1) => (isNum(x) ? (x * 100).toLocaleString(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
+  const num = (x, d = 2) => (isNum(x) ? Number(x).toLocaleString(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }) : "—");
+  const priceFmt = (x) => (isNum(x) ? Number(x).toLocaleString(loc(), { maximumFractionDigits: x >= 100 ? 2 : 4, minimumFractionDigits: x >= 100 ? 2 : 0 }) : "—");
+  const when = (ms) => (ms ? new Date(ms).toLocaleString(loc(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+  const clock = (ms) => (ms ? new Date(ms).toLocaleTimeString(loc(), { hour: "2-digit", minute: "2-digit" }) : "—");
+  function ago(ms) {
+    if (!ms) return t("time.never");
+    const s = (Date.now() - ms) / 1000;
+    if (s < 0) return t("time.in", { v: inDur(-s) });
+    if (s < 90) return t("time.sec_ago", { n: Math.round(s) });
+    if (s < 5400) return t("time.min_ago", { n: Math.round(s / 60) });
+    if (s < 172800) return t("time.h_ago", { n: Math.round(s / 3600) });
+    return t("time.d_ago", { n: Math.round(s / 86400) });
+  }
+  function inDur(s) { return s < 5400 ? t("time.min", { n: Math.max(1, Math.round(s / 60)) }) : t("time.h", { n: Math.round(s / 3600) }); }
+  function el(tag, attrs, ...kids) { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e[k] = v; else e.setAttribute(k, v); } kids.forEach((k) => k != null && e.append(k)); return e; }
+  function toast(msg) { const tt = $("toast"); tt.textContent = msg; tt.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (tt.hidden = true), 4500); }
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const keyOf = (sym, tf) => `${sym}|${tf}|h${S.settings.horizon}`;
-  const higherTfs = (tf) => CONTEXT_TFS.filter((t) => A.TF_MS[t] >= A.TF_MS[tf]);
+  const higherTfs = (tf) => CONTEXT_TFS.filter((x) => A.TF_MS[x] >= A.TF_MS[tf]);
   const server = () => S.mode === "server" && S.server;
-  const REASON_TEXT = { confidence_below_threshold: "confidence below threshold", edge_below_min_edge: "UP and DOWN too close",
-    flat_more_likely: "FLAT more likely than the direction", low_confidence: "confidence below threshold", data_quality: "data quality check failed",
-    abnormal_market: "abnormal market", low_liquidity: "low liquidity", news_conflict: "fresh news contradicts the model",
-    late_decision: "decided too late after the candle close (delayed scheduled run)" };
-  const KIND_TEXT = { region_blocked: "blocked in this region", cors: "browser access blocked (CORS)", network: "network/DNS/firewall",
-    timeout: "timeout", rate_limited: "rate limited", http_error: "HTTP error", stale_data: "data too old", no_data: "no verified data",
-    stale: "stream went silent", gap: "sequence gap", bad_response: "bad response", exchange_error: "exchange error" };
+  const dirText = (d) => (d ? t("dir." + d.replace(" ", "_")) : "—");
+  const regimeText = (r) => (r ? t("regime." + r) : "—");
+
+  // NO TRADE: machine reason (ledger) -> user-facing code (kept in English, like an error code) + translated explanation
+  const CODE_OF = { confidence_below_threshold: "LOW_CONFIDENCE", low_confidence: "LOW_CONFIDENCE", edge_below_min_edge: "LOW_CONFIDENCE",
+    flat_more_likely: "LOW_CONFIDENCE", stale_data: "STALE_DATA", late_decision: "STALE_DATA", insufficient_history: "INSUFFICIENT_HISTORY",
+    model_not_ready: "MODEL_NOT_READY", low_liquidity: "HIGH_SPREAD", model_not_better_than_baseline: "MODEL_NOT_BETTER_THAN_BASELINE",
+    no_edge_after_costs: "NO_EDGE_AFTER_COSTS", data_quality: "DATA_QUALITY", abnormal_market: "ABNORMAL_MARKET", news_conflict: "NEWS_CONFLICT" };
+  const codeLabel = (c) => c.replaceAll("_", " ");
+  function reasonCodes(p) { return [...new Set((p.gate_reasons || []).map((r) => CODE_OF[r] || r.toUpperCase()))]; }
+  function reasonDetail(p) {
+    const g = p.gate || {}, parts = [];
+    for (const r of p.gate_reasons || []) {
+      const P = { conf: pct(g.confidence ?? p.confidence), thr: pct(g.threshold, 0), edge: pct(g.edge), min: pct(g.min_edge, 0),
+        flat: pct(g.p_flat ?? p.p_flat), q: pct(g.quality_score ?? p.quality_score, 0), delay: isNum(g.decision_delay_sec) ? Math.round(g.decision_delay_sec / 60) : "—",
+        issues: (g.quality_issues || []).map(issueText).join("; ") || "—", miss: pct(g.missing_feature_share, 0),
+        gain: g.baseline && isNum(g.baseline.gain) ? num(g.baseline.gain, 4) : "—", pb: g.baseline ? pct(g.baseline.p_better, 0) : "—",
+        req: g.baseline ? pct(g.baseline.p_required, 0) : "—" };
+      parts.push(`${codeLabel(CODE_OF[r] || r)} — ${t("reason." + r, P)}`);
+    }
+    return parts.join(" · ");
+  }
+  function issueText(s) { const code = String(s).split(":")[0].trim(); const k = "issue." + code; return I.has(k) ? `${code}: ${t(k)}` : s; }
+  const kindText = (k) => (k ? (I.has("kind." + k) ? t("kind." + k) : k) : "");
 
   // ------------------------------------------------------------- storage
   const Store = {
@@ -55,7 +88,7 @@
     },
     tx(store, mode, fn) {
       if (!this.db) return Promise.resolve(null);
-      return new Promise((res, rej) => { const t = this.db.transaction(store, mode), st = t.objectStore(store); const r = fn(st); t.oncomplete = () => res(r && "result" in r ? r.result : r); t.onerror = () => rej(t.error); });
+      return new Promise((res, rej) => { const tr = this.db.transaction(store, mode), st = tr.objectStore(store); const r = fn(st); tr.oncomplete = () => res(r && "result" in r ? r.result : r); tr.onerror = () => rej(tr.error); });
     },
     async get(k) { if (!this.db) return this.mem.get(k); return this.tx("kv", "readonly", (st) => st.get(k)); },
     async set(k, v) { if (!this.db) { this.mem.set(k, v); return; } return this.tx("kv", "readwrite", (st) => st.put(v, k)); },
@@ -64,7 +97,7 @@
     async clear() { if (!this.db) { this.mem.clear(); return; } await this.tx("kv", "readwrite", (st) => st.clear()); await this.tx("ledger", "readwrite", (st) => st.clear()); },
   };
 
-  // ------------------------------------------------------------- server (24/7 backend) data
+  // ------------------------------------------------------------- server (backend) data
   async function detectServer() {
     if (!/^https?:$/.test(location.protocol)) return false;
     try {
@@ -80,11 +113,12 @@
     const bust = `?t=${Math.floor(Date.now() / 60000)}`;
     try {
       const r = await fetch(S.cfg.state_url + "state.json" + bust, { cache: "no-store" });
-      if (r.status === 404) { S.serverErr = "The backend has not published data yet (first run pending)."; S.server = null; render(); return; }
+      if (r.status === 404) { S.serverErr = t("server.not_published"); S.server = null; render(); return; }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const first = !S.server;
       S.server = await r.json(); S.serverErr = null;
       if (first && S.server.primary_exchange) { S.bookEx = S.server.primary_exchange; $("bookEx").value = S.bookEx; }
+      if (first) fillTfOptions(S.server.settings.predict_timeframes);
       const l = await fetch(S.cfg.state_url + "ledger.json" + bust, { cache: "no-store" });
       if (l.ok) { const prev = S.serverLedger; S.serverLedger = (await l.json()).predictions || []; notifyNew(prev); }
       for (const sym of S.server.settings.symbols) for (const tf of S.server.settings.predict_timeframes) {
@@ -92,7 +126,7 @@
         if (c.ok) S.serverCandles[`${sym}|${tf}`] = await c.json();
       }
       notifyOutages();
-    } catch (e) { S.serverErr = `Backend data not reachable: ${e.message}`; }
+    } catch (e) { S.serverErr = t("server.unreachable", { error: e.message }); }
     render();
   }
 
@@ -104,8 +138,12 @@
     if (!prev.length) return; // first load: do not replay history
     for (const p of S.serverLedger) {
       if (prevIds.has(p.prediction_id)) continue;
-      if (p.prediction === "NO TRADE" ? !S.settings.notifyAll : !(S.settings.notifySignals || S.settings.notifyAll)) continue;
-      notify(`${p.symbol} ${p.timeframe}: ${p.prediction}`, `Price ${priceFmt(p.price)} · UP ${pct(p.p_up, 0)} DOWN ${pct(p.p_down, 0)} FLAT ${pct(p.p_flat, 0)} · confidence ${pct(p.confidence, 0)} · research only, not advice`);
+      const sig = p.prediction !== "NO TRADE";
+      if (sig ? !(S.settings.notifySignals || S.settings.notifyAll) : !S.settings.notifyAll) continue;
+      if (sig && p.confidence < (S.settings.notifyMinConf || 0)) continue;
+      if (Date.now() - (p.candle_ts + A.TF_MS[p.timeframe]) > (S.settings.notifyMaxAgeMin || 10) * 60000) continue; // never a stale signal
+      notify(`${p.symbol} ${p.timeframe}: ${p.prediction}`, t("notify.body", { price: priceFmt(p.price), up: pct(p.p_up, 0), down: pct(p.p_down, 0), flat: pct(p.p_flat, 0),
+        conf: pct(p.confidence, 0), q: pct(p.quality_score, 0), why: sig ? t("notify.passed") : reasonCodes(p).map(codeLabel).join(", ") }));
     }
   }
   function notifyOutages() {
@@ -113,7 +151,7 @@
     const pr = (S.server.probes && S.server.probes.probes) || {};
     for (const [ex, p] of Object.entries(pr)) {
       const ok = !!(p.rest && p.rest.ok && p.ws && p.ws.verified_live);
-      if (ex in S.prevSourceOk && S.prevSourceOk[ex] !== ok) notify(`${ex}: ${ok ? "data source back" : "DATA SOURCE UNAVAILABLE"}`, ok ? "Verified again by the backend." : (p.rest && p.rest.error) || (p.ws && p.ws.error) || "");
+      if (ex in S.prevSourceOk && S.prevSourceOk[ex] !== ok) notify(ok ? t("notify.source_back", { ex }) : t("notify.source_down", { ex }), ok ? t("notify.source_back_body") : (p.rest && p.rest.error) || (p.ws && p.ws.error) || "");
       S.prevSourceOk[ex] = ok;
     }
   }
@@ -139,7 +177,7 @@
   const closed = (arr) => (arr || []).filter((c) => c.closed);
   function contextCandles(sym, tf, limit) {
     const out = {};
-    for (const t of higherTfs(tf)) { const c = closed(S.candles[sym] && S.candles[sym][t]); if (c.length) out[t] = limit ? c.slice(-(t === tf ? limit : Math.ceil(limit / 2))) : c; }
+    for (const x of higherTfs(tf)) { const c = closed(S.candles[sym] && S.candles[sym][x]); if (c.length) out[x] = limit ? c.slice(-(x === tf ? limit : Math.ceil(limit / 2))) : c; }
     return out;
   }
   async function detectPrimary() {
@@ -151,14 +189,14 @@
     return null;
   }
   async function loadHistory() {
-    setPhase("Downloading market history…");
+    setPhase(t("phase.history"));
     S.primary = await detectPrimary();
     if (!S.primary) { setPhase(""); render(); return false; }
     const tfs = [...new Set(S.settings.predictTfs.flatMap(higherTfs))];
     for (const sym of SYMBOLS) {
       S.candles[sym] = S.candles[sym] || {};
       for (const tf of tfs) {
-        setPhase(`Downloading ${sym} ${tf} history from ${S.primary}…`);
+        setPhase(t("phase.history_item", { sym, tf, ex: S.primary }));
         try { S.candles[sym][tf] = await C.history(S.primary, sym, tf, HISTORY[tf]); } catch (e) { S.historyErrors[`${sym} ${tf}`] = e.message; }
       }
     }
@@ -192,7 +230,7 @@
   function jobBase(sym, tf) {
     const s = S.settings;
     return { candlesByTf: contextCandles(sym, tf), tf, horizon: s.horizon, atrMult: s.atrMult, costBps: 2 * s.feeBps + 2 * s.slippageBps + s.spreadBps,
-      folds: 3, minTrain: 600, threshold: s.threshold, minEdge: s.minEdge,
+      folds: 3, minTrain: 600, threshold: s.threshold, minEdge: s.minEdge, baselinePBetter: s.baselinePBetter,
       costs: { feeBps: s.feeBps, slippageBps: s.slippageBps, spreadBps: s.spreadBps, latencyMs: s.latencyMs, threshold: s.threshold, minEdge: s.minEdge } };
   }
   function ensureModels() {
@@ -210,7 +248,7 @@
     const t0 = Date.now();
     try {
       const base = jobBase(j.sym, j.tf), rows = (base.candlesByTf[j.tf] || []).length;
-      if (rows < 1000) throw new Error(`only ${rows} closed ${j.tf} candles; at least 1000 are needed`);
+      if (rows < 1000) throw new Error(t("local.need_rows", { rows, tf: j.tf }));
       if (j.kind === "baseline") {
         const r = await runJob("baseline", base), version = newVersion(j.sym, j.tf);
         await Store.set(`model:${version}`, r.model); S.models[version] = r.model; await Store.set(`oos:${version}`, r.oos);
@@ -218,7 +256,7 @@
         S.registry.versions.unshift({ version, key: j.key, status: "production", created: Date.now(), feature_version: A.FEATURE_VERSION,
           train_start: r.train_start_ts, train_end: r.train_end_ts, n_train: r.n_train, metrics: r.metrics, reason: old ? "baseline retrained" : "initial baseline", train_sec: (Date.now() - t0) / 1000 });
         S.registry.production[j.key] = version; await Store.set("registry", S.registry);
-        toast(`Model ready: ${j.sym} ${j.tf}`);
+        toast(t("toast.model_ready", { sym: j.sym, tf: j.tf }));
       } else {
         const prod = production(j.key), model = await modelOf(prod.version), s = S.settings;
         const r = await runJob("challenger", { ...base, production: { model, train_end_ts: prod.train_end }, minNewLabels: s.minNewLabels,
@@ -244,8 +282,8 @@
   function liveBook(ex, sym) {
     const st = S.streams[ex]; if (!st) return null;
     const bk = st.books[sym]; if (!bk || !bk.ready) return null;
-    const age = (Date.now() - (bk.recv || 0)) / 1000; if (age > 30) return null;
-    return { ...bk.metrics(10), ageSec: age, exchange: ex };
+    const a = (Date.now() - (bk.recv || 0)) / 1000; if (a > 30) return null;
+    return { ...bk.metrics(10), ageSec: a, exchange: ex };
   }
   function exchangePrices(sym) { const out = {}; for (const ex of EXCHANGES) { const b = liveBook(ex, sym); if (b && b.mid) out[ex] = b.mid; } return out; }
   function qualityLocal(sym, tf) {
@@ -271,15 +309,26 @@
     const reasons = [];
     if (g.signal === "NO TRADE") reasons.push(g.confidence < s.threshold ? "confidence_below_threshold" : Math.abs(pUp - pDown) < s.minEdge ? "edge_below_min_edge" : "flat_more_likely");
     if (!q.ok) reasons.push("data_quality");
+    if (q.issues.some((i) => i.code === "stale_candles" || i.code === "no_candles")) reasons.push("stale_data");
     if (regime === "abnormal") reasons.push("abnormal_market");
     if (regime === "low_liquidity") reasons.push("low_liquidity");
+    const missing = x.filter((v) => !isNum(v)).length / Math.max(1, x.length);
+    if (missing > 0.2) reasons.push("insufficient_history");
+    const bt = prod.metrics && prod.metrics.baseline_test;
+    if (!(bt && bt.passed)) reasons.push("model_not_better_than_baseline");
+    const obt = (prod.metrics && prod.metrics.backtest) || {};
+    if (g.signal !== "NO TRADE" && !((obt.trades || 0) >= 30 && (obt.avg_net_bps || 0) > 0)) reasons.push("no_edge_after_costs");
     if (g.signal !== "NO TRADE" && nf.news_relevance >= 0.5 && ((g.signal === "UP" && nf.news_impact <= -0.35) || (g.signal === "DOWN" && nf.news_impact >= 0.35))) reasons.push("news_conflict");
+    const rt = 2 * s.feeBps + 2 * s.slippageBps + Math.max(s.spreadBps, (book && book.spreadBps) || 0), btm = (prod.metrics && prod.metrics.backtest) || {};
     const rec = { id, prediction_id: id, created_ms: Date.now(), candle_ts: last.open_ts, target_ts: last.open_ts + s.horizon * A.TF_MS[tf], symbol: sym, exchange: S.primary,
       timeframe: tf, horizon_bars: s.horizon, price: last.close, prediction: reasons.length ? "NO TRADE" : g.signal, model_direction: g.modelDir, p_up: pUp, p_down: pDown, p_flat: pFlat,
       confidence: g.confidence, label_threshold: A.labelThreshold(row.atr_pct, s.horizon, s.atrMult, 2 * s.feeBps + 2 * s.slippageBps + s.spreadBps),
       gate_reasons: reasons, regime, quality_score: q.score, news_impact: nf.news_impact, model_version: prod.version, features_version: A.FEATURE_VERSION,
       gate: { confidence: g.confidence, threshold: s.threshold, edge: Math.abs(pUp - pDown), min_edge: s.minEdge, p_flat: pFlat, quality_score: q.score,
-        quality_issues: q.issues.map((i) => `${i.code}: ${i.detail}`), decision_delay_sec: Math.round((Date.now() - last.open_ts - A.TF_MS[tf]) / 1000) },
+        quality_issues: q.issues.map((i) => `${i.code}: ${i.detail}`), decision_delay_sec: Math.round((Date.now() - last.open_ts - A.TF_MS[tf]) / 1000),
+        missing_feature_share: missing, baseline: bt || null, check_ts: last.open_ts + (s.horizon + 1) * A.TF_MS[tf],
+        costs: { round_trip_bps: rt, fee_bps_per_side: s.feeBps, slippage_bps_per_side: s.slippageBps, spread_bps: Math.max(s.spreadBps, (book && book.spreadBps) || 0),
+          oos_signals: btm.trades, oos_avg_net_bps: btm.avg_net_bps, oos_win_rate: btm.win_rate } },
       features: Object.fromEntries(model.features.map((f, i) => [f, isNum(x[i]) ? x[i] : null])) };
     S.ledger.set(id, rec); await Store.putLedger(rec);
   }
@@ -316,6 +365,10 @@
   }
 
   // ------------------------------------------------------------- unified view model
+  function allLedger() {
+    if (server()) return S.serverLedger;
+    return [...S.ledger.values()];
+  }
   function view() {
     const sv = server(), sym = S.symbol, tf = S.tf;
     if (sv) {
@@ -330,229 +383,340 @@
     const ledger = [...S.ledger.values()].filter((r) => r.symbol === sym && r.timeframe === tf).sort((a, b) => b.candle_ts - a.candle_ts);
     const tk = S.primary && S.tickers[`${S.primary}|${sym}`];
     return { key, horizon: S.settings.horizon, threshold: S.settings.threshold, minEdge: S.settings.minEdge, latest: ledger[0] || null, ledger,
-      model: p ? { production: { version: p.version, created_ms: p.created, n_train: p.n_train, reason: p.reason, metrics: p.metrics }, versions: S.registry.versions.filter((v) => v.key === key).map((v) => ({ ...v, created_ms: v.created })), learning_status: S.learning.status[key] } : null,
+      model: p ? { production: { version: p.version, created_ms: p.created, n_train: p.n_train, reason: p.reason, metrics: p.metrics }, baseline_test: p.metrics && p.metrics.baseline_test,
+        versions: S.registry.versions.filter((v) => v.key === key).map((v) => ({ ...v, created_ms: v.created, log_loss: v.metrics && v.metrics.log_loss, accuracy: v.metrics && v.metrics.accuracy })), learning_status: S.learning.status[key] } : null,
       ticker: tk && isNum(tk.last) ? { last: tk.last, change_24h_pct: tk.changePct, ts_ms: tk.ts } : null, primary: S.primary,
       candles: S.candles[sym] && S.candles[sym][tf] ? S.candles[sym][tf].slice(-450) : null };
   }
-  function rowsToCandles(rows) { return rows.open_ts.map((t, i) => ({ open_ts: t, open: rows.open[i], high: rows.high[i], low: rows.low[i], close: rows.close[i], volume: rows.volume[i], closed: rows.closed[i], cvd: rows.cvd ? rows.cvd[i] : null })); }
+  function rowsToCandles(rows) { return rows.open_ts.map((x, i) => ({ open_ts: x, open: rows.open[i], high: rows.high[i], low: rows.low[i], close: rows.close[i], volume: rows.volume[i], closed: rows.closed[i], cvd: rows.cvd ? rows.cvd[i] : null })); }
 
   // ------------------------------------------------------------- status
+  function browserLive() { const o = {}; for (const ex of EXCHANGES) o[ex] = !!(S.streams[ex] && S.streams[ex].status().state === "live"); return o; }
   function statuses() {
-    const sv = server(), now = Date.now(), out = [];
-    const browserLive = EXCHANGES.filter((ex) => S.streams[ex] && S.streams[ex].status().state === "live");
-    if (S.mode === "server") {
-      if (!sv) out.push(["Backend (24/7)", "OFFLINE", "bad", S.serverErr || "waiting for data"]);
-      else {
-        const age = (now - sv.generated_ms) / 60000, lc = sv.last_cycle || {};
-        const st = age > 45 ? "STALE" : lc.ok ? "RUNNING" : "DEGRADED";
-        out.push(["Backend (24/7)", st, st === "RUNNING" ? "good" : "warn", `last run ${ago(sv.generated_ms)}${lc.errors && lc.errors.length ? " · errors: " + lc.errors.map((e) => e.step).join(", ") : ""}`]);
-        const pr = (sv.probes && sv.probes.probes) || {}, primary = sv.primary_exchange, pp = pr[primary] || {};
-        const candleAges = Object.values((pp.rest && pp.rest.candles) || {}).map((c) => c.last_close_age_sec).filter(isNum);
-        const verified = pp.rest && pp.rest.ok;
-        out.push(["Market data", verified ? `VERIFIED ${ago(sv.probes.ts_ms)}` : "DATA SOURCE UNAVAILABLE", verified ? (age > 45 ? "warn" : "good") : "bad",
-          primary ? `${primary} candles via backend${candleAges.length ? ", newest closed candle " + Math.round(Math.min(...candleAges)) + " s old at check" : ""}` : "no exchange reachable from the backend"]);
-        const wsOk = Object.entries(pr).filter(([, p]) => p.ws && p.ws.verified_live).map(([ex]) => ex);
-        const wsPart = Object.entries(pr).filter(([, p]) => p.ws && !p.ws.verified_live && (p.ws.verified_symbols || []).length).map(([ex, p]) => `${ex} (${p.ws.verified_symbols.join(", ")} only)`);
-        const bookState = browserLive.length ? "LIVE" : wsOk.length ? `VERIFIED ${ago(sv.probes.ts_ms)}` : wsPart.length ? `PARTIAL ${ago(sv.probes.ts_ms)}` : "DATA SOURCE UNAVAILABLE";
-        out.push(["Order book", bookState, browserLive.length ? "good" : wsOk.length || wsPart.length ? "warn" : "bad",
-          browserLive.length ? `live in this browser: ${browserLive.join(", ")}` : wsOk.length || wsPart.length ? `backend sample: ${wsOk.concat(wsPart).join(", ")}` : "no exchange stream verified"]);
-        const ns = (sv.news && sv.news.status) || {};
-        out.push(["News AI", ns.feeds_ok ? "LIVE" : ns.ts_ms ? "DATA SOURCE UNAVAILABLE" : "NOT STARTED", ns.feeds_ok ? "good" : "bad", ns.analyzer ? `${ns.analyzer} · ${ns.feeds_ok}/${ns.feeds_total} feeds · ${ago(ns.ts_ms)}${ns.llm_error ? " · LLM error" : ""}` : ""]);
-        const keys = Object.keys(sv.models), ready = keys.filter((k) => sv.models[k].production);
-        out.push(["Prediction", ready.length === keys.length && keys.length ? "READY" : ready.length ? "PARTIAL" : "MODEL NOT READY", ready.length === keys.length && keys.length ? "good" : "warn", `${ready.length}/${keys.length} models in production`]);
-        const lr = sv.learning && sv.learning.last_run;
-        out.push(["Learning", lr ? "ACTIVE" : "WAITING", lr ? "good" : "warn", lr ? `last cycle ${ago(lr.ts_ms)}` : "first cycle pending"]);
-        const lb = sv.last_backup;
-        out.push(["Database", sv.ledger_summary ? "OK" : "UNKNOWN", sv.ledger_summary ? "good" : "warn", `${sv.ledger_summary ? sv.ledger_summary.total : 0} predictions stored${lb ? " · backup " + ago(lb.ts_ms) : ""}`]);
-      }
-      return out;
-    }
+    const now = Date.now();
+    if (S.mode === "server") return ST.computeServer(server() || null, now, { browserLive: browserLive(), fetchError: S.serverErr });
     const v = view(), base = closed(v.candles || []), lastClose = base.length ? base[base.length - 1].open_ts + A.TF_MS[S.tf] : null;
-    const market = !S.primary ? "DATA SOURCE UNAVAILABLE" : lastClose && now - lastClose < A.TF_MS[S.tf] + 300000 && S.lastPoll && now - S.lastPoll < 180000 ? "LIVE" : base.length ? "STALE" : "DATA SOURCE UNAVAILABLE";
-    out.push(["Mode", "LOCAL", "warn", "runs only while this page is open"]);
-    out.push(["Market data", market, market === "LIVE" ? "good" : market === "STALE" ? "warn" : "bad", S.primary ? `${S.primary} · polled ${ago(S.lastPoll)}${S.pollError ? " · " + S.pollError : ""}` : primaryHint()]);
-    out.push(["Order book", browserLive.length ? "LIVE" : S.started ? "DATA SOURCE UNAVAILABLE" : "STOPPED", browserLive.length ? "good" : "bad", EXCHANGES.map((ex) => `${ex} ${S.streams[ex] ? S.streams[ex].status().state : "off"}`).join(", ")]);
-    out.push(["News AI", S.newsStatus.state, S.newsStatus.state === "LIVE" ? "good" : "bad", S.newsStatus.analyzer || ""]);
-    const p = production(v.key);
-    out.push(["Prediction", S.training && S.training.key === v.key ? "TRAINING" : p ? "READY" : "MODEL NOT READY", p ? "good" : "warn", S.training ? `training ${S.training.sym} ${S.training.tf}` : ""]);
-    out.push(["Learning", S.training ? "TRAINING" : !S.started ? "STOPPED" : Object.keys(S.registry.production).length ? "ACTIVE" : "WAITING FOR DATA", S.started ? "good" : "warn", S.learning.lastRun ? `last cycle ${ago(S.learning.lastRun)}` : ""]);
-    out.push(["Database", S.dbOk ? "OK" : "MEMORY ONLY", S.dbOk ? "good" : "warn", S.dbOk ? `browser storage · ${S.ledger.size} predictions` : "storage blocked"]);
-    return out;
+    const preds = [...S.ledger.values()].map((r) => r.created_ms);
+    return ST.computeLocal({ exchanges: EXCHANGES, streams: Object.fromEntries(EXCHANGES.map((ex) => [ex, S.streams[ex] ? S.streams[ex].status().state : null])),
+      primary: S.primary, lastPoll: S.lastPoll, lastClose, tfMs: A.TF_MS[S.tf], hasCandles: base.length > 0, dbOk: S.dbOk, ledgerSize: S.ledger.size,
+      training: !!S.training, modelReady: !!production(v.key), newsLive: S.newsStatus.state === "LIVE", newsTs: S.newsStatus.ts, newsAnalyzer: S.newsStatus.analyzer,
+      lastPrediction: preds.length ? Math.max(...preds) : null, started: S.started }, now);
+  }
+  function statusDetail(s) {
+    const p = { ...(s.params || {}) };
+    if (["binance", "bybit", "okx"].includes(s.id)) {
+      const bits = [];
+      if (s.code === "browser_live") bits.push(t("st.ex.browser_live"));
+      if (s.code !== "not_checked" && S.mode === "server") {
+        bits.push("REST: " + (s.restOk ? "OK" : `${s.restKind || "—"}${s.restKind ? " (" + kindText(s.restKind) + ")" : ""}`));
+        bits.push("WS: " + (s.wsOk ? "OK" : `${s.wsKind || "—"}${s.wsKind ? " (" + kindText(s.wsKind) + ")" : ""}`));
+        if (isNum(s.restErrorRate) || isNum(s.wsErrorRate)) bits.push(t("st.ex.error_rate", { rest: pct(s.restErrorRate, 0), ws: pct(s.wsErrorRate, 0) }));
+        if (s.primary) bits.push(t("st.ex.primary"));
+      } else if (s.code !== "browser_live") bits.push(I.has("st.code." + s.code) ? t("st.code." + s.code) : s.code);
+      return bits.join(" · ");
+    }
+    const key = `st.${s.id}.${s.code}`;
+    return I.has(key) ? t(key, p) : s.code;
   }
   function primaryHint() {
     const errs = Object.entries(S.historyErrors).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ");
-    return S.started ? `No exchange reachable from this browser.${errs ? " " + errs : ""} Run the connection test below.` : "Press Start to connect to the exchanges.";
+    return S.started ? t("local.no_exchange", { errors: errs }) : t("local.press_start");
   }
 
   // ------------------------------------------------------------- rendering
-  function setPhase(t) { const p = $("phase"); p.textContent = t; p.hidden = !t; }
+  function setPhase(x) { const p = $("phase"); p.textContent = x; p.hidden = !x; }
   function render() { if (render.q) return; render.q = requestAnimationFrame(() => { render.q = null; try { renderAll(); } catch (e) { console.error(e); } }); }
   function renderAll() {
     const v = view(), sv = server();
     $("welcome").hidden = S.mode !== "local" || S.started;
-    $("modeNote").textContent = S.mode === "server" ? (sv ? `Data from the 24/7 backend, updated ${ago(sv.generated_ms)}. ${sv.schedule_note}` : S.serverErr || "Connecting to the backend…")
-      : S.mode === "local" ? "Local mode: this page does the work itself and stops when it is closed." : "";
+    $("modeNote").textContent = S.mode === "server"
+      ? (sv ? t((sv.health && sv.health.backend_mode) === "continuous" ? "mode.server_continuous" : "mode.server_scheduled", { ago: ago(sv.generated_ms) }) : S.serverErr || t("mode.connecting"))
+      : S.mode === "local" ? t("mode.local") : "";
     $("assetName").textContent = `${S.symbol} · ${S.tf}`;
-    // price: live browser trade > backend/REST ticker > last closed candle
     const st = S.streams[v.primary], lp = st && st.lastPrice[S.symbol], lpFresh = st && Date.now() - (st.lastTradeTs[S.symbol] || 0) < 30000;
     const base = closed(v.candles || []);
     let price = null, src = "";
-    if (lp && lpFresh) { price = lp; src = `live trades on ${v.primary}, this browser`; }
-    else if (v.ticker && isNum(v.ticker.last)) { price = v.ticker.last; src = `${v.primary} ticker, ${sv ? "backend check " : ""}${ago(v.ticker.ts_ms)}`; }
-    else if (base.length) { price = base[base.length - 1].close; src = "last closed candle"; }
-    $("price").textContent = price ? "$" + priceFmt(price) : "DATA SOURCE UNAVAILABLE"; $("price").classList.toggle("unavail", !price);
-    $("priceSource").textContent = price ? `Source: ${src}` : S.mode === "server" ? (S.serverErr || "The backend has no price yet.") : primaryHint();
-    const ch = v.ticker && v.ticker.change_24h_pct; $("change").textContent = isNum(ch) ? `${ch >= 0 ? "+" : ""}${ch.toFixed(2)}% 24h` : ""; $("change").dataset.dir = ch > 0 ? "up" : ch < 0 ? "down" : "";
-    renderPrediction(v); renderStatus(); renderExchanges(v); renderModel(v); renderLedger(v); renderNews(); drawChart(v); renderProbe();
-  }
-  function reasonDetail(p) {
-    const g = p.gate || {}, parts = [];
-    for (const r of p.gate_reasons || []) {
-      if (r === "confidence_below_threshold" || r === "low_confidence") parts.push(`confidence ${pct(g.confidence ?? p.confidence)} < threshold ${pct(g.threshold, 0)}`);
-      else if (r === "edge_below_min_edge") parts.push(`|UP−DOWN| ${pct(g.edge)} < ${pct(g.min_edge, 0)}`);
-      else if (r === "flat_more_likely") parts.push(`FLAT ${pct(g.p_flat ?? p.p_flat)} ≥ direction ${pct(g.confidence ?? p.confidence)}`);
-      else if (r === "data_quality") parts.push(`data quality ${pct(g.quality_score ?? p.quality_score, 0)}: ${(g.quality_issues || []).join("; ") || "failed"}`);
-      else parts.push(REASON_TEXT[r] || r);
-    }
-    return parts.join(" · ");
+    if (lp && lpFresh) { price = lp; src = t("price.src_live", { ex: v.primary }); }
+    else if (v.ticker && isNum(v.ticker.last)) { price = v.ticker.last; src = t(sv ? "price.src_backend" : "price.src_ticker", { ex: v.primary, ago: ago(v.ticker.ts_ms) }); }
+    else if (base.length) { price = base[base.length - 1].close; src = t("price.src_candle"); }
+    $("price").textContent = price ? "$" + priceFmt(price) : t("common.unavailable"); $("price").classList.toggle("unavail", !price);
+    $("priceSource").textContent = price ? t("price.source", { src }) : S.mode === "server" ? (S.serverErr || t("price.no_backend_price")) : primaryHint();
+    const ch = v.ticker && v.ticker.change_24h_pct; $("change").textContent = isNum(ch) ? `${ch >= 0 ? "+" : ""}${num(ch, 2)}% ${t("price.24h")}` : ""; $("change").dataset.dir = ch > 0 ? "up" : ch < 0 ? "down" : "";
+    renderPrediction(v); renderStatus(); renderExchanges(v); renderModel(v); renderChanges(v); renderLedger(); renderNews(); drawChart(v); renderProbe(); renderNotifyInfo();
   }
   function renderPrediction(v) {
     const p = v.latest, tfms = A.TF_MS[S.tf];
     const fresh = p && Date.now() - (p.candle_ts + tfms) < 2 * tfms + (server() ? 30 * 60000 : 0);
-    $("threshold").style.left = `calc(${(v.threshold * 100).toFixed(1)}% - 1px)`; $("threshold").dataset.label = `threshold ${Math.round(v.threshold * 100)}%`;
-    $("horizon").textContent = `next ${v.horizon} × ${S.tf}`;
+    $("threshold").style.left = `calc(${(v.threshold * 100).toFixed(1)}% - 1px)`; $("threshold").dataset.label = t("pred.threshold_label", { v: Math.round(v.threshold * 100) });
+    $("horizon").textContent = t("pred.horizon", { n: v.horizon, tf: S.tf });
     const sig = $("signal");
     const notReady = !(v.model && v.model.production);
+    $("predDetails").replaceChildren();
     if (!p || !fresh) {
-      sig.textContent = notReady ? (S.training && S.training.key === v.key ? "TRAINING" : "MODEL NOT READY") : "NO TRADE"; sig.dataset.state = notReady ? "none" : "NO TRADE";
+      sig.textContent = notReady ? (S.training && S.training.key === v.key ? t("pred.training") : "MODEL NOT READY") : "NO TRADE"; sig.dataset.state = notReady ? "none" : "NO TRADE";
       ["segDown", "segFlat", "segUp"].forEach((i) => ($(i).style.width = "0")); ["pDown", "pFlat", "pUp", "confidence", "regime", "quality", "newsImpact"].forEach((i) => ($(i).textContent = "—"));
-      $("reasons").textContent = notReady ? (S.mode === "server" ? "The backend trains the first model after downloading history (first runs)." : "The model trains automatically once history is downloaded.")
-        : p ? `No current prediction: the latest one is for the candle of ${when(p.candle_ts)}, which is too old.` : "No prediction yet: one is made at each candle close.";
+      $("reasons").textContent = notReady ? `MODEL NOT READY — ${t(S.mode === "server" ? "pred.not_ready_server" : "pred.not_ready_local")}`
+        : p ? `STALE DATA — ${t("pred.too_old", { when: when(p.candle_ts) })}` : t("pred.none_yet");
       $("predMeta").textContent = "";
       return;
     }
     sig.textContent = p.prediction; sig.dataset.state = p.prediction;
     $("segDown").style.width = (p.p_down * 100).toFixed(2) + "%"; $("segFlat").style.width = (p.p_flat * 100).toFixed(2) + "%"; $("segUp").style.width = (p.p_up * 100).toFixed(2) + "%";
     $("pDown").textContent = pct(p.p_down); $("pFlat").textContent = pct(p.p_flat); $("pUp").textContent = pct(p.p_up); $("confidence").textContent = pct(p.confidence);
-    $("regime").textContent = (p.regime || "—").replace("_", " ").toUpperCase();
+    $("regime").textContent = regimeText(p.regime);
     const qs = p.quality_score ?? (p.gate && p.gate.quality_score);
-    $("quality").textContent = isNum(qs) ? `${qs >= 0.9 ? "GOOD" : qs >= 0.7 ? "FAIR" : "BAD"} (${Math.round(qs * 100)}%)` : "—";
-    $("newsImpact").textContent = isNum(p.news_impact) ? (p.news_impact > 0 ? "+" : "") + p.news_impact.toFixed(2) : "—";
-    $("reasons").textContent = p.prediction === "NO TRADE" ? "No trade because: " + reasonDetail(p) + "." : `Signal passed every gate. Model leans ${String(p.model_direction).toLowerCase()}.`;
-    $("predMeta").textContent = `Candle ${when(p.candle_ts)} · price at prediction ${priceFmt(p.price)} on ${p.exchange} · decided ${p.gate && isNum(p.gate.decision_delay_sec) ? Math.round(p.gate.decision_delay_sec / 60) + " min after close" + (p.gate.late ? " (late)" : "") : when(p.created_ms)} · model ${p.model_version}`;
+    $("quality").textContent = isNum(qs) ? `${t(qs >= 0.9 ? "quality.good" : qs >= 0.7 ? "quality.fair" : "quality.bad")} (${Math.round(qs * 100)}%)` : "—";
+    $("newsImpact").textContent = isNum(p.news_impact) ? (p.news_impact > 0 ? "+" : "") + num(p.news_impact, 2) : "—";
+    $("reasons").textContent = p.prediction === "NO TRADE" ? t("pred.no_trade_because", { reasons: reasonDetail(p) }) : t("pred.passed", { dir: dirText(p.model_direction) });
+    const g = p.gate || {};
+    $("predMeta").textContent = t("pred.meta", { candle: when(p.candle_ts), price: priceFmt(p.price), ex: p.exchange,
+      decided: isNum(g.decision_delay_sec) ? t("pred.decided_after", { min: Math.round(g.decision_delay_sec / 60) }) + (g.late ? ` (${t("pred.late")})` : "") : when(p.created_ms),
+      model: p.model_version });
+    $("predDetails").replaceChildren(...detailBlocks(p, v.horizon));
     const b = liveBook(v.primary, S.symbol) || (v.serverBook && { spreadBps: v.serverBook.spread_bps, imbalance: v.serverBook.imbalance, ageSec: (Date.now() - v.serverBook.recv_ms) / 1000 });
-    $("spread").textContent = b && isNum(b.spreadBps) ? `${num(b.spreadBps, 2)} bps${b.ageSec > 30 ? " (" + ago(Date.now() - b.ageSec * 1000) + ")" : ""}` : "DATA SOURCE UNAVAILABLE";
+    $("spread").textContent = b && isNum(b.spreadBps) ? `${num(b.spreadBps, 2)} ${t("unit.bps")}${b.ageSec > 30 ? " (" + ago(Date.now() - b.ageSec * 1000) + ")" : ""}` : t("common.unavailable");
     $("imbalance").textContent = b && isNum(b.imbalance) ? (b.imbalance > 0 ? "+" : "") + num(b.imbalance, 2) : "—";
   }
-  function dl(target, items) { target.replaceChildren(...items.flatMap(([k, v, c, d]) => [el("dt", { text: k }), el("dd", { class: "st-" + c }, el("span", { text: "● " + v }), d ? el("span", { class: "detail", text: d }) : null)])); }
+  // details shared by the readout and the prediction dialog: direction vs after-cost result, factors, check time, outcome
+  function detailBlocks(p, horizon) {
+    const g = p.gate || {}, c = g.costs || {}, out = [], thrBps = isNum(p.label_threshold) ? p.label_threshold * 1e4 : null;
+    const rows = [];
+    rows.push([t("det.direction"), t("det.direction_val", { up: pct(p.p_up), down: pct(p.p_down), flat: pct(p.p_flat), thr: num(thrBps, 1) })]);
+    if (isNum(c.round_trip_bps)) rows.push([t("det.costs"), t("det.costs_val", { rt: num(c.round_trip_bps, 1), fee: num(c.fee_bps_per_side, 1), slip: num(c.slippage_bps_per_side, 1), spread: num(c.spread_bps, 1) })]);
+    rows.push([t("det.after_costs"), isNum(c.oos_signals) && c.oos_signals > 0 ? t("det.after_costs_val", { n: c.oos_signals, net: num(c.oos_avg_net_bps, 1), win: pct(c.oos_win_rate, 0) }) : t("det.after_costs_none")]);
+    const bt = g.baseline;
+    rows.push([t("det.baseline"), bt ? t(bt.passed ? "det.baseline_pass" : "det.baseline_fail", { gain: num(bt.gain, 4), lo: bt.gain_ci95 ? num(bt.gain_ci95[0], 4) : "—", hi: bt.gain_ci95 ? num(bt.gain_ci95[1], 4) : "—", p: pct(bt.p_better, 0), req: pct(bt.p_required, 0) }) : t("det.baseline_unknown")]);
+    rows.push([t("det.freshness"), t("det.freshness_val", { q: pct(p.quality_score ?? g.quality_score, 0), delay: isNum(g.decision_delay_sec) ? Math.round(g.decision_delay_sec) : "—", issues: (g.quality_issues || []).map(issueText).join("; ") || t("det.no_issues") })]);
+    const check = g.check_ts || (p.target_ts && p.target_ts + A.TF_MS[p.timeframe]);
+    rows.push([t("det.check_time"), `${when(check)}${check > Date.now() ? " (" + t("time.in", { v: inDur((check - Date.now()) / 1000) }) + ")" : ""}`]);
+    rows.push([t("det.outcome"), p.actual_direction ? t("det.outcome_val", { dir: dirText(p.actual_direction), ret: pct(p.actual_return, 2), price: priceFmt(p.actual_price), cls: t("cls." + String(p.error_class || "").replace("_late", "")) }) : t("det.pending")]);
+    rows.push([t("det.model"), `${p.model_version} · ${p.features_version || ""}`]);
+    out.push(el("dl", { class: "kv detail-kv" }, ...rows.flatMap(([k, val]) => [el("dt", { text: k }), el("dd", { text: val })])));
+    const f = g.factors || [];
+    if (f.length) {
+      out.push(el("p", { class: "small muted", text: t("det.factors_intro", { dir: dirText(p.model_direction) }) }));
+      out.push(el("ul", { class: "factors" }, ...f.map((x) => el("li", {}, el("code", { text: x.feature }), el("span", { class: "muted", text: ` ${featureGroup(x.feature)} · ${t("det.value")} ${num(x.value, 4)} (${t("det.median")} ${num(x.median, 4)}) → ` }),
+        el("b", { class: x.effect > 0 ? "dir-up" : "dir-down", text: `${x.effect > 0 ? "+" : ""}${num(x.effect * 100, 1)} ${t("unit.pp")}` })))));
+    }
+    return out;
+  }
+  function featureGroup(f) {
+    const n = f.replace(/^(15m|1h|4h|1d)_/, "");
+    const g = /rsi|macd|roc|ret_|stoch|di_diff/.test(n) ? "momentum" : /ema|adx|trend|close_vs/.test(n) ? "trend" : /atr|bb_|vol_z|range|volat/.test(n) ? "volatility"
+      : /vol|taker|cvd|flow|obv/.test(n) ? "volume" : /regime/.test(n) ? "regime" : /news/.test(n) ? "news" : "other";
+    return `${t("fg." + g)}${/^(1h|4h|1d)_/.test(f) ? " · " + t("fg.higher_tf", { tf: f.split("_")[0] }) : ""}`;
+  }
   function renderStatus() {
-    const st = statuses(); dl($("statusGrid"), st);
-    const head = st.find((x) => x[0] === "Market data") || st[0];
-    $("liveDot").className = "live-dot st-" + head[2]; $("liveText").textContent = `${S.mode === "server" ? "24/7 backend" : "local"} · market ${head[1]}`;
+    const st = statuses();
+    $("statusGrid").replaceChildren(...st.flatMap((s) => {
+      const tone = ST.TONE[s.state] === "good" && s.partial ? "info" : ST.TONE[s.state];
+      return [el("dt", { text: t("st.name." + s.id) }), el("dd", { class: "st-" + tone },
+        el("span", { class: "badge", text: s.state }), el("span", { class: "detail", text: [statusDetail(s), s.ts ? ago(s.ts) : ""].filter(Boolean).join(" · ") }))];
+    }));
+    const data = st.filter((s) => ["binance", "bybit", "okx", "history", "websocket"].includes(s.id));
+    const order = ["LIVE", "DELAYED", "STALE", "ERROR", "OFFLINE"], best = order.find((o) => data.some((s) => s.state === o)) || "OFFLINE";
+    $("liveDot").className = "live-dot st-" + ST.TONE[best]; $("liveText").textContent = t("top.data_state", { state: best });
   }
   function renderExchanges(v) {
-    const sv = server(), pr = (sv && sv.probes && sv.probes.probes) || {}, rows = [];
+    const sv = server(), pr = (sv && sv.probes && sv.probes.probes) || {}, stats = (sv && sv.source_stats) || {}, rows = [];
     for (const ex of EXCHANGES) {
-      const s = S.streams[ex], b = liveBook(ex, S.symbol), st = s ? s.status() : null, p = pr[ex];
-      const rest = p ? (p.rest.ok ? "ok" : p.rest.partial ? "partial" : `${KIND_TEXT[p.rest.kind] || p.rest.kind || "failed"}`) : "—";
-      const ws = p ? (p.ws.verified_live ? `ok (${p.ws.events} msgs)` : KIND_TEXT[p.ws.kind] || p.ws.kind || "no data") : "—";
-      rows.push(el("tr", {}, el("td", { text: ex + (ex === v.primary ? " (model)" : "") }),
-        el("td", { class: "num", text: s && s.lastPrice[S.symbol] && Date.now() - (s.lastTradeTs[S.symbol] || 0) < 60000 ? priceFmt(s.lastPrice[S.symbol]) : "—" }),
-        el("td", { class: "num", text: b ? num(b.spreadBps, 2) : "—" }),
-        el("td", { class: st && st.state === "live" ? "st-good" : "st-bad", text: st ? (st.state === "live" ? "LIVE" : st.state === "unavailable" ? "UNAVAILABLE" : st.state) : "off" }),
-        el("td", { class: p && p.rest.ok ? "st-good" : p ? "st-bad" : "", text: rest }),
-        el("td", { class: p && p.ws.verified_live ? "st-good" : p ? "st-bad" : "", text: ws }),
-        el("td", { class: "small muted", text: ((st && st.error) || (p && !p.rest.ok && p.rest.error) || (p && !p.ws.verified_live && p.ws.error) || "").slice(0, 90) })));
+      const s = S.streams[ex], b = liveBook(ex, S.symbol), st = s ? s.status() : null, p = pr[ex], es = stats[ex] || {};
+      const rest = p ? (p.rest.ok ? "OK" : p.rest.partial ? "partial" : (p.rest.kind || "error")) : "—";
+      const ws = p ? (p.ws.verified_live ? `OK (${p.ws.events})` : p.ws.kind || "no_data") : "—";
+      const rate = (ch) => (es[ch] && es[ch]["24h"] ? `${pct(es[ch]["24h"].error_rate, 0)} / ${es[ch]["24h"].checks}` : "—");
+      const raw = ((st && st.state !== "live" && st.error) || (p && !p.rest.ok && p.rest.error) || (p && !p.ws.verified_live && p.ws.error) || "").slice(0, 120);
+      const kind = (p && !p.rest.ok && p.rest.kind) || (p && !p.ws.verified_live && p.ws.kind) || (st && st.state !== "live" && st.state);
+      rows.push(el("tr", {}, el("td", { "data-label": t("ex.col.exchange"), text: ex + (ex === v.primary ? ` (${t("ex.model")})` : "") }),
+        el("td", { class: "num", "data-label": t("ex.col.price"), text: s && s.lastPrice[S.symbol] && Date.now() - (s.lastTradeTs[S.symbol] || 0) < 60000 ? priceFmt(s.lastPrice[S.symbol]) : "—" }),
+        el("td", { class: "num", "data-label": t("ex.col.spread"), text: b ? num(b.spreadBps, 2) : "—" }),
+        el("td", { class: st && st.state === "live" ? "st-good" : "st-bad", "data-label": t("ex.col.browser"), text: st ? (st.state === "live" ? "LIVE" : st.state.toUpperCase()) : t("ex.off") }),
+        el("td", { class: p && p.rest.ok ? "st-good" : p ? "st-bad" : "", "data-label": t("ex.col.rest"), text: rest }),
+        el("td", { class: p && p.ws.verified_live ? "st-good" : p ? "st-bad" : "", "data-label": t("ex.col.ws"), text: ws }),
+        el("td", { class: "num", "data-label": t("ex.col.err_rest"), text: rate("rest") }), el("td", { class: "num", "data-label": t("ex.col.err_ws"), text: rate("ws") }),
+        el("td", { class: "small wrap", "data-label": t("ex.col.error") }, kind && kind !== "live" ? el("span", { text: kindText(kind) + (raw ? " — " : "") }) : null, raw ? el("code", { class: "raw", text: raw }) : null)));
     }
-    $("exTable").replaceChildren(el("tr", {}, ...["Exchange", "Live price", "Spread bps", "This browser", sv ? `Backend REST (${ago(sv.probes && sv.probes.ts_ms)})` : "Backend REST", "Backend WS", "Last error"].map((h) => el("th", { text: h }))), ...rows);
+    const head = [t("ex.col.exchange"), t("ex.col.price"), t("ex.col.spread"), t("ex.col.browser"), sv ? t("ex.col.rest_at", { ago: ago(sv.probes && sv.probes.ts_ms) }) : t("ex.col.rest"), t("ex.col.ws"), t("ex.col.err_rest"), t("ex.col.err_ws"), t("ex.col.error")];
+    $("exTable").replaceChildren(el("thead", {}, el("tr", {}, ...head.map((h) => el("th", { text: h })))), el("tbody", {}, ...rows));
   }
   function kv(target, pairs) { target.replaceChildren(...pairs.flatMap(([k, val]) => [el("dt", { text: k }), el("dd", { text: val == null ? "—" : String(val) })])); }
   function renderModel(v) {
     const m = v.model, p = m && m.production;
-    if (!p) { kv($("modelKv"), [["Status", "MODEL NOT READY"], ["Learning", m && m.learning_status ? JSON.stringify(m.learning_status).slice(0, 160) : "waiting for enough real history"]]); $("whyNoTrade").replaceChildren(); }
+    if (!p) { kv($("modelKv"), [[t("model.status"), "MODEL NOT READY"], [t("model.learning"), m && m.learning_status ? learningText(m.learning_status) : t("model.waiting_history")]]); $("whyNoTrade").replaceChildren(); }
     else {
-      const mt = p.metrics || {}, b = mt.baseline_prior || {}, sg = mt.signals || {}, ls = m.learning_status, lr = m.ledger_review;
-      kv($("modelKv"), [["Model version", p.version], ["Status", `production · ${p.reason || ""}`],
-        ["Accuracy (out-of-sample)", `${pct(mt.accuracy)} (naive ${pct(b.accuracy)})`], ["Log loss", `${num(mt.log_loss, 4)} (naive ${num(b.log_loss, 4)})`],
-        ["Brier", num(mt.brier, 4)], ["Calibration error (ECE)", num(mt.ece, 3)], ["F1 macro", num(mt.f1_macro, 3)],
-        ["Signals in validation", isNum(sg.coverage) ? `${sg.signals} (${pct(sg.coverage)}), hit ${pct(sg.hit_rate)}` : "—"],
-        ["Validation", mt.method || "—"], ["Last training", `${when(p.created_ms)} · ${p.n_train} rows`],
-        ["Last validation", ls ? `${ls.status}${ls.new_labels != null ? ` (${ls.new_labels}/${ls.required} new labels)` : ""} · ${ago(ls.ts_ms || ls.ts)}` : "not yet"],
-        ["Live ledger", lr && lr.resolved ? `${lr.resolved} resolved, ${lr.signals} signals, hit ${pct(lr.signal_hit_rate)}` : "no resolved predictions yet"],
-        ["Stored backtest", mt.backtest && mt.backtest.trades ? `${mt.backtest.trades} trades, net ${num(mt.backtest.avg_net_bps, 1)} bps/trade after costs` : "no signal passed the gate"]]);
+      const mt = p.metrics || {}, b = mt.baseline_prior || {}, sg = mt.signals || {}, ls = m.learning_status, lr = m.ledger_review, bt = m.baseline_test || mt.baseline_test;
+      kv($("modelKv"), [[t("model.version"), p.version], [t("model.status"), `production · ${p.reason || ""}`],
+        [t("model.vs_baseline"), bt && isNum(bt.gain) ? t(bt.passed ? "det.baseline_pass" : "det.baseline_fail", { gain: num(bt.gain, 4), lo: bt.gain_ci95 ? num(bt.gain_ci95[0], 4) : "—", hi: bt.gain_ci95 ? num(bt.gain_ci95[1], 4) : "—", p: pct(bt.p_better, 0), req: pct(bt.p_required, 0) }) : t("det.baseline_unknown")],
+        [t("model.logloss"), t("model.vs_naive", { m: num(mt.log_loss, 4), n: num(b.log_loss, 4) })], [t("model.brier"), num(mt.brier, 4)],
+        [t("model.accuracy"), t("model.vs_naive", { m: pct(mt.accuracy), n: pct(b.accuracy) })], [t("model.ece"), num(mt.ece, 3)],
+        [t("model.precision_recall"), `${num(mt.precision_macro, 3)} / ${num(mt.recall_macro, 3)}`],
+        [t("model.signals"), isNum(sg.coverage) ? t("model.signals_val", { n: sg.signals, cov: pct(sg.coverage), hit: pct(sg.hit_rate) }) : "—"],
+        [t("model.validation"), mt.method || "—"], [t("model.last_training"), t("model.rows", { when: when(p.created_ms), n: p.n_train })],
+        [t("model.last_validation"), ls ? `${learningText(ls)} · ${ago(ls.ts_ms || ls.ts)}` : t("model.not_yet")],
+        [t("model.live"), lr && lr.resolved ? t("model.live_val", { n: lr.resolved, s: lr.signals, hit: pct(lr.signal_hit_rate) }) : t("model.no_resolved")],
+        [t("model.backtest"), mt.backtest && mt.backtest.trades ? t("model.backtest_val", { n: mt.backtest.trades, net: num(mt.backtest.avg_net_bps, 1) }) : t("model.no_signal_passed")],
+        [t("model.gaps"), m.gaps ? t("model.gaps_val", { d: m.gaps.last_24h, n: m.gaps.total }) : "—"]]);
       renderWhy(mt, v);
+      renderRegimes(mt);
     }
     const vs = (m && m.versions) || [];
-    $("versions").replaceChildren(el("tr", {}, ...["Version", "Status", "Created", "Log loss", "Accuracy", "Gain", "P(better)", "Reason"].map((h) => el("th", { text: h }))),
-      ...vs.slice(0, 15).map((x) => el("tr", {}, el("td", { text: x.version }), el("td", { text: x.status }), el("td", { text: when(x.created_ms) }),
-        el("td", { class: "num", text: num(x.log_loss ?? (x.metrics && x.metrics.log_loss), 4) }), el("td", { class: "num", text: pct(x.accuracy ?? (x.metrics && x.metrics.accuracy)) }),
-        el("td", { class: "num", text: x.comparison ? num(x.comparison.logloss_gain, 4) : "—" }), el("td", { class: "num", text: x.comparison ? pct(x.comparison.bootstrap_p_better, 0) : "—" }),
-        el("td", { text: x.reason || "" }))));
+    $("versions").replaceChildren(el("thead", {}, el("tr", {}, ...[t("ver.version"), t("ver.status"), t("ver.created"), t("ver.logloss"), t("ver.naive"), t("ver.accuracy"), t("ver.gain"), "P(better)", t("ver.reason")].map((h) => el("th", { text: h })))),
+      el("tbody", {}, ...vs.slice(0, 15).map((x) => el("tr", {}, el("td", { "data-label": t("ver.version"), text: x.version }), el("td", { "data-label": t("ver.status"), text: x.status }), el("td", { "data-label": t("ver.created"), text: when(x.created_ms) }),
+        el("td", { class: "num", "data-label": t("ver.logloss"), text: num(x.log_loss, 4) }), el("td", { class: "num", "data-label": t("ver.naive"), text: num(x.naive_log_loss, 4) }),
+        el("td", { class: "num", "data-label": t("ver.accuracy"), text: pct(x.accuracy) }),
+        el("td", { class: "num", "data-label": t("ver.gain"), text: x.comparison ? num(x.comparison.logloss_gain, 4) : "—" }), el("td", { class: "num", "data-label": "P(better)", text: x.comparison ? pct(x.comparison.bootstrap_p_better, 0) : "—" }),
+        el("td", { class: "wrap", "data-label": t("ver.reason"), text: x.reason || "" })))));
+  }
+  function learningText(ls) {
+    const k = "learn." + (ls.status || "unknown");
+    let s = I.has(k) ? t(k) : ls.status;
+    if (ls.new_labels != null) s += ` (${t("learn.labels", { n: ls.new_labels, need: ls.required })})`;
+    if (ls.reason) s += ` · ${ls.reason}`;
+    if (ls.error) s += ` · ${ls.error}`;
+    return s;
+  }
+  function renderRegimes(mt) {
+    const by = mt.by_regime || {};
+    const ent = Object.entries(by);
+    $("regimeTable").replaceChildren(...(ent.length ? [el("thead", {}, el("tr", {}, ...[t("reg.regime"), t("reg.n"), t("ver.logloss"), t("ver.accuracy"), t("reg.signals"), t("reg.hit")].map((h) => el("th", { text: h })))),
+      el("tbody", {}, ...ent.map(([r, x]) => el("tr", {}, el("td", { "data-label": t("reg.regime"), text: regimeText(r) }), el("td", { class: "num", "data-label": t("reg.n"), text: x.n }),
+        el("td", { class: "num", "data-label": t("ver.logloss"), text: num(x.log_loss, 4) }), el("td", { class: "num", "data-label": t("ver.accuracy"), text: pct(x.accuracy) }),
+        el("td", { class: "num", "data-label": t("reg.signals"), text: x.signals ? x.signals.signals : "—" }), el("td", { class: "num", "data-label": t("reg.hit"), text: x.signals ? pct(x.signals.hit_rate) : "—" }))))] : []));
   }
   function renderWhy(mt, v) {
     const g = mt.gate_diagnostics, ld = mt.label_diagnostics, out = [];
     if (g) {
       const f = g.first_failing_condition, n = g.n || 1;
-      out.push(el("p", { class: "small", text: `On ${g.n} out-of-sample predictions: ${f.passed} passed (${pct(f.passed / n)}); blocked by confidence < ${pct(g.threshold, 0)}: ${f.confidence_below_threshold}; UP≈DOWN: ${f.edge_below_min_edge}; FLAT more likely: ${f.flat_more_likely}. Confidence median ${pct(g.confidence_quantiles.p50)}, 90th pct ${pct(g.confidence_quantiles.p90)}, max ${pct(g.confidence_quantiles.max)}.` }));
+      out.push(el("p", { class: "small", text: t("why.summary", { n: g.n, passed: f.passed, share: pct(f.passed / n), thr: pct(g.threshold, 0), c: f.confidence_below_threshold, e: f.edge_below_min_edge, fl: f.flat_more_likely,
+        p50: pct(g.confidence_quantiles.p50), p90: pct(g.confidence_quantiles.p90), max: pct(g.confidence_quantiles.max) }) }));
       const cal = g.per_class_calibration;
-      if (cal) out.push(el("p", { class: "small", text: "Calibration by class (predicted vs actual): " + Object.entries(cal).map(([k, c]) => `${k} ${pct(c.mean_predicted)} vs ${pct(c.actual_frequency)}`).join(", ") + "." }));
-      if (ld) out.push(el("p", { class: "small", text: `A move counts as UP/DOWN above ${num(ld.median_label_threshold_bps, 1)} bps (median); the median move over the horizon is ${num(ld.median_abs_forward_return_bps, 1)} bps, so ${pct(ld.share_moves_above_threshold)} of moves qualify.` }));
+      if (cal) out.push(el("p", { class: "small", text: t("why.calibration", { list: Object.entries(cal).map(([k, c]) => `${dirText(k)} ${pct(c.mean_predicted)} / ${pct(c.actual_frequency)}`).join(", ") }) }));
+      if (ld) out.push(el("p", { class: "small", text: t("why.labels", { thr: num(ld.median_label_threshold_bps, 1), med: num(ld.median_abs_forward_return_bps, 1), share: pct(ld.share_moves_above_threshold) }) }));
       const sw = g.threshold_sweep_informational || [];
-      out.push(el("div", { class: "table-scroll" }, el("table", { class: "tbl" }, el("tr", {}, ...["Threshold (info only)", "Signals", "Coverage", "Hit rate", "Avg gross bps"].map((h) => el("th", { text: h }))),
-        ...sw.map((r) => el("tr", { class: Math.abs(r.threshold - g.threshold) < 1e-9 ? "current" : "" }, el("td", { text: pct(r.threshold, 0) + (Math.abs(r.threshold - g.threshold) < 1e-9 ? " (current)" : "") }),
-          el("td", { class: "num", text: r.signals }), el("td", { class: "num", text: pct(r.coverage) }), el("td", { class: "num", text: pct(r.hit_rate) }), el("td", { class: "num", text: num(r.avg_gross_bps, 1) }))))));
-      out.push(el("p", { class: "small muted", text: "The table shows what other thresholds would have done on the same unseen data. The threshold is never lowered automatically." }));
+      out.push(el("div", { class: "table-scroll" }, el("table", { class: "tbl cards" }, el("thead", {}, el("tr", {}, ...[t("why.col.threshold"), t("why.col.signals"), t("why.col.coverage"), t("why.col.hit"), t("why.col.gross")].map((h) => el("th", { text: h })))),
+        el("tbody", {}, ...sw.map((r) => el("tr", { class: Math.abs(r.threshold - g.threshold) < 1e-9 ? "current" : "" }, el("td", { "data-label": t("why.col.threshold"), text: pct(r.threshold, 0) + (Math.abs(r.threshold - g.threshold) < 1e-9 ? ` (${t("why.current")})` : "") }),
+          el("td", { class: "num", "data-label": t("why.col.signals"), text: r.signals }), el("td", { class: "num", "data-label": t("why.col.coverage"), text: pct(r.coverage) }), el("td", { class: "num", "data-label": t("why.col.hit"), text: pct(r.hit_rate) }), el("td", { class: "num", "data-label": t("why.col.gross"), text: num(r.avg_gross_bps, 1) })))))));
+      out.push(el("p", { class: "small muted", text: t("why.note") }));
     }
     const sv = server(), reasons = sv && sv.ledger_summary && sv.ledger_summary.no_trade_reasons;
-    if (reasons && Object.keys(reasons).length) out.push(el("p", { class: "small", text: "Live NO TRADE reasons so far: " + Object.entries(reasons).map(([k, c]) => `${REASON_TEXT[k] || k}: ${c}`).join(", ") + "." }));
+    if (reasons && Object.keys(reasons).length) {
+      const byCode = {}; for (const [k, c] of Object.entries(reasons)) { const code = CODE_OF[k] || k; byCode[code] = (byCode[code] || 0) + c; }
+      out.push(el("p", { class: "small", text: t("why.live_reasons", { list: Object.entries(byCode).map(([k, c]) => `${codeLabel(k)}: ${c}`).join(", ") }) }));
+    }
     $("whyNoTrade").replaceChildren(...out);
   }
-  function renderLedger(v) {
-    let rows = v.ledger.slice().sort((a, b) => b.candle_ts - a.candle_ts);
-    const f = S.ledgerFilter;
-    if (f === "signals") rows = rows.filter((r) => r.prediction !== "NO TRADE"); else if (f === "resolved") rows = rows.filter((r) => r.resolved_ms); else if (f === "notrade") rows = rows.filter((r) => r.prediction === "NO TRADE");
-    const sig = v.ledger.filter((r) => r.resolved_ms && r.prediction !== "NO TRADE"), hits = sig.filter((r) => r.result === "correct").length;
-    $("ledgerStats").textContent = `${v.ledger.length} predictions · ${sig.length} resolved signals · hit ${sig.length ? pct(hits / sig.length) : "—"}`;
-    const t = $("ledger");
-    if (!rows.length) { t.replaceChildren(el("tr", {}, el("td", { class: "muted", text: v.ledger.length ? "Nothing matches this filter." : "No predictions recorded yet. One is made at each candle close." }))); $("moreBtn").hidden = true; return; }
-    t.replaceChildren(el("tr", {}, ...["Candle", "Price", "Prediction", "Up", "Down", "Flat", "Conf.", "Quality", "Regime", "Actual", "Return", "Result", "Why / model"].map((h) => el("th", { text: h }))),
-      ...rows.slice(0, S.ledgerLimit).map((r) => el("tr", {}, el("td", { text: when(r.candle_ts) }), el("td", { class: "num", text: priceFmt(r.price) }), el("td", { class: "pred-" + r.prediction.replace(" ", ""), text: r.prediction }),
-        el("td", { class: "num", text: pct(r.p_up) }), el("td", { class: "num", text: pct(r.p_down) }), el("td", { class: "num", text: pct(r.p_flat) }), el("td", { class: "num", text: pct(r.confidence) }),
-        el("td", { class: "num", text: pct(r.quality_score, 0) }), el("td", { text: (r.regime || "").replace("_", " ") }), el("td", { text: r.actual_direction || "pending" }),
-        el("td", { class: "num", text: isNum(r.actual_return) ? pct(r.actual_return, 2) : "—" }), el("td", { class: "res-" + (r.result || ""), text: (r.error_class || "").replaceAll("_", " ") }),
-        el("td", { class: "small muted wrap", text: (r.prediction === "NO TRADE" ? reasonDetail(r) : "passed all gates") + ` · ${r.model_version}` }))));
+  // model change report: what changed between versions, overall and per market regime
+  function renderChanges(v) {
+    const sv = server(), box = $("changes");
+    const key = v.key, events = sv ? (sv.model_changes || []).filter((e) => !e.model_key || e.model_key === key) : [];
+    const vs = (v.model && v.model.versions) || [];
+    const items = [];
+    for (const x of vs.filter((y) => y.comparison).slice(0, 8)) {
+      const c = x.comparison, checks = c.checks || {};
+      const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => t("chk." + k));
+      const li = el("li", {}, el("div", {}, el("b", { text: `${when(x.created_ms)} · ${t("chg.status." + (x.status || "unknown"))}` }), el("span", { class: "muted", text: ` ${x.version}` })),
+        el("div", { class: "small", text: t("chg.summary", { n: c.n_holdout, before: num(c.logloss_production, 4), after: num(c.logloss_challenger, 4), gain: num(c.logloss_gain, 4), p: pct(c.bootstrap_p_better, 0),
+          bb: num(c.brier_production, 4), ba: num(c.brier_challenger, 4) }) }),
+        c.halves_gain ? el("div", { class: "small", text: t("chg.halves", { a: num(c.halves_gain[0], 4), b: num(c.halves_gain[1], 4) }) }) : null,
+        failed.length ? el("div", { class: "small st-bad", text: t("chg.rejected_because", { list: failed.join(", ") }) }) : el("div", { class: "small st-good", text: t("chg.all_checks") }));
+      const br = c.by_regime || {};
+      if (Object.keys(br).length) li.append(el("div", { class: "table-scroll" }, el("table", { class: "tbl cards" }, el("thead", {}, el("tr", {}, ...[t("reg.regime"), t("reg.n"), t("chg.before"), t("chg.after"), t("ver.gain")].map((h) => el("th", { text: h })))),
+        el("tbody", {}, ...Object.entries(br).map(([r, z]) => el("tr", {}, el("td", { "data-label": t("reg.regime"), text: regimeText(r) }), el("td", { class: "num", "data-label": t("reg.n"), text: z.n }),
+          el("td", { class: "num", "data-label": t("chg.before"), text: num(z.logloss_production, 4) }), el("td", { class: "num", "data-label": t("chg.after"), text: num(z.logloss_challenger, 4) }),
+          el("td", { class: "num " + (z.gain > 0 ? "st-good" : "st-bad"), "data-label": t("ver.gain"), text: num(z.gain, 4) })))))));
+      items.push(li);
+    }
+    for (const e of events.filter((x) => x.event_type === "model_rollback" || x.event_type === "database_recovery" || x.event_type === "operator_command").slice(0, 6)) {
+      const pl = e.payload || {};
+      items.push(el("li", {}, el("b", { text: `${when(e.ts_ms)} · ${t("chg.ev." + e.event_type)}` }),
+        el("div", { class: "small", text: e.event_type === "model_rollback" ? t("chg.rollback", { from: (pl.from || {}).version || "—", to: (pl.to || {}).version || "—", reason: pl.reason || "" })
+          : e.event_type === "database_recovery" ? t("chg.recovery", { backup: pl.backup || "—", problem: pl.problem || "" }) : `${pl.action || ""} ${pl.id || ""}` })));
+    }
+    box.replaceChildren(...(items.length ? items : [el("li", { class: "muted", text: t("chg.none") })]));
+  }
+  function ledgerRows() {
+    const f = S.filter, now = Date.now();
+    let rows = allLedger().slice();
+    const sym = f.symbol === "current" ? S.symbol : f.symbol, tf = f.tf === "current" ? S.tf : f.tf;
+    if (sym !== "all") rows = rows.filter((r) => r.symbol === sym);
+    if (tf !== "all") rows = rows.filter((r) => r.timeframe === tf);
+    if (f.model !== "all") rows = rows.filter((r) => r.model_version === f.model);
+    const span = { "24h": 86400e3, "7d": 7 * 86400e3, "30d": 30 * 86400e3 }[f.period];
+    if (span) rows = rows.filter((r) => now - r.candle_ts <= span);
+    if (f.type === "signals") rows = rows.filter((r) => r.prediction !== "NO TRADE"); else if (f.type === "resolved") rows = rows.filter((r) => r.resolved_ms); else if (f.type === "notrade") rows = rows.filter((r) => r.prediction === "NO TRADE");
+    return rows.sort((a, b) => b.candle_ts - a.candle_ts || a.symbol.localeCompare(b.symbol));
+  }
+  function fillModelFilter() {
+    const sel = $("fModel"), cur = S.filter.model, models = [...new Set(allLedger().map((r) => r.model_version))].sort().reverse();
+    const opts = [el("option", { value: "all", text: t("filter.all_models") }), ...models.map((m) => el("option", { value: m, text: m }))];
+    if (sel.options.length !== opts.length || [...sel.options].some((o, i) => o.value !== opts[i].value)) { sel.replaceChildren(...opts); sel.value = models.includes(cur) ? cur : "all"; }
+    else sel.options[0].textContent = t("filter.all_models");
+  }
+  function renderLedger() {
+    fillModelFilter();
+    const rows = ledgerRows(), all = allLedger();
+    const sig = rows.filter((r) => r.resolved_ms && r.prediction !== "NO TRADE"), hits = sig.filter((r) => r.result === "correct").length;
+    const resolved = rows.filter((r) => r.resolved_ms), span = rows.length ? [Math.min(...rows.map((r) => r.candle_ts)), Math.max(...rows.map((r) => r.candle_ts))] : null;
+    $("ledgerStats").textContent = t("ledger.stats", { n: rows.length, total: all.length, resolved: resolved.length, sig: sig.length, hit: sig.length ? pct(hits / sig.length) : "—",
+      from: span ? when(span[0]) : "—", to: span ? when(span[1]) : "—" });
+    const tb = $("ledger");
+    if (!rows.length) { tb.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "muted", text: all.length ? t("ledger.nothing") : t("ledger.empty") })))); $("moreBtn").hidden = true; return; }
+    const head = [t("col.candle"), t("col.asset"), t("col.price"), t("col.prediction"), t("col.up"), t("col.down"), t("col.flat"), t("col.conf"), t("col.quality"), t("col.regime"), t("col.check"), t("col.actual"), t("col.return"), t("col.result"), t("col.why")];
+    tb.replaceChildren(el("thead", {}, el("tr", {}, ...head.map((h) => el("th", { text: h })))), el("tbody", {}, ...rows.slice(0, S.ledgerLimit).map((r) => {
+      const g = r.gate || {}, check = g.check_ts || (r.target_ts + A.TF_MS[r.timeframe]);
+      const tr = el("tr", { class: "clickable", tabindex: "0", role: "button", "aria-label": t("ledger.open_details") },
+        el("td", { "data-label": t("col.candle"), text: when(r.candle_ts) }), el("td", { "data-label": t("col.asset"), text: `${r.symbol} ${r.timeframe} · ${r.exchange}` }),
+        el("td", { class: "num", "data-label": t("col.price"), text: priceFmt(r.price) }), el("td", { class: "pred-" + r.prediction.replace(" ", ""), "data-label": t("col.prediction"), text: r.prediction }),
+        el("td", { class: "num", "data-label": t("col.up"), text: pct(r.p_up) }), el("td", { class: "num", "data-label": t("col.down"), text: pct(r.p_down) }), el("td", { class: "num", "data-label": t("col.flat"), text: pct(r.p_flat) }),
+        el("td", { class: "num", "data-label": t("col.conf"), text: pct(r.confidence) }), el("td", { class: "num", "data-label": t("col.quality"), text: pct(r.quality_score, 0) }),
+        el("td", { "data-label": t("col.regime"), text: regimeText(r.regime) }), el("td", { "data-label": t("col.check"), text: clock(check) }),
+        el("td", { "data-label": t("col.actual"), text: r.actual_direction ? dirText(r.actual_direction) : t("det.pending") }),
+        el("td", { class: "num", "data-label": t("col.return"), text: isNum(r.actual_return) ? pct(r.actual_return, 2) : "—" }),
+        el("td", { class: "res-" + (r.result || ""), "data-label": t("col.result"), text: r.error_class ? t("cls." + r.error_class.replace("_late", "")) + (r.error_class.endsWith("_late") ? ` (${t("cls.late")})` : "") : "—" }),
+        el("td", { class: "small muted wrap", "data-label": t("col.why"), text: (r.prediction === "NO TRADE" ? reasonCodes(r).map(codeLabel).join(", ") : t("ledger.passed")) + ` · ${r.model_version}` }));
+      tr.onclick = () => openPrediction(r); tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPrediction(r); } };
+      return tr;
+    })));
     $("moreBtn").hidden = rows.length <= S.ledgerLimit;
+  }
+  function openPrediction(r) {
+    $("predDialogTitle").textContent = `${r.symbol} ${r.timeframe} · ${r.prediction}`;
+    const hb = r.horizon_bars || 4;
+    const head = el("p", { class: "small", text: t("dlg.head", { candle: when(r.candle_ts), ex: r.exchange, h: hb, tf: r.timeframe, price: priceFmt(r.price), regime: regimeText(r.regime) }) });
+    const why = el("p", { class: "small", text: r.prediction === "NO TRADE" ? t("pred.no_trade_because", { reasons: reasonDetail(r) }) : t("pred.passed", { dir: dirText(r.model_direction) }) });
+    $("predDialogBody").replaceChildren(head, why, ...detailBlocks(r, hb));
+    $("predDialog").showModal();
   }
   function renderNews() {
     const sv = server();
     let list, status;
     if (sv) {
       const ns = sv.news.status || {};
-      status = ns.ts_ms ? `${ns.feeds_ok}/${ns.feeds_total} feeds · ${ns.analyzer} · updated ${ago(ns.ts_ms)}${ns.llm_error ? " · LLM error: " + ns.llm_error : ""}` : "The backend has not read news yet.";
+      status = ns.ts_ms ? t("news.status", { ok: ns.feeds_ok, total: ns.feeds_total, analyzer: ns.analyzer, ago: ago(ns.ts_ms) }) + (ns.llm_error ? ` · ${t("news.llm_error")}: ${ns.llm_error}` : "") : t("news.not_read");
       list = (sv.news.events || []).map((e) => ({ event: e.title, url: e.url, timestamp: e.published_ms, source: e.source, category: e.category || "other", direction: e.direction, relevance: e.relevance, confidence: e.confidence, analyzer: e.analyzer, affected_assets: e.affected_assets || [] }));
-    } else { const ns = S.newsStatus; status = ns.ts ? `${ns.state} · ${ns.analyzer} · ${ago(ns.ts)}${ns.errors && ns.errors.length && ns.state !== "LIVE" ? " · " + ns.errors.join("; ") : ""}` : "News loads after Start."; list = S.news; }
+    } else { const ns = S.newsStatus; status = ns.ts ? `${ns.state === "LIVE" ? "DELAYED" : "OFFLINE"} · ${ns.analyzer} · ${ago(ns.ts)}${ns.errors && ns.errors.length && ns.state !== "LIVE" ? " · " + ns.errors.join("; ") : ""}` : t("news.after_start"); list = S.news; }
     $("newsStatus").textContent = status;
     const base = S.symbol.split("/")[0], rel = list.filter((e) => e.affected_assets.includes(base) || e.affected_assets.includes("CRYPTO_MARKET") || e.relevance >= 0.4).slice(0, 25);
     $("newsList").replaceChildren(...(rel.length ? rel.map((e) => {
-      const d = e.direction > 0.1 ? ["dir-up", "positive"] : e.direction < -0.1 ? ["dir-down", "negative"] : ["", "neutral"];
+      const d = e.direction > 0.1 ? ["dir-up", "news.positive"] : e.direction < -0.1 ? ["dir-down", "news.negative"] : ["", "news.neutral"];
       const title = e.url ? el("a", { href: e.url, target: "_blank", rel: "noopener noreferrer", text: e.event }) : el("span", { text: e.event });
-      return el("li", {}, title, el("div", { class: "news-meta" }, el("span", { text: when(e.timestamp) }), el("span", { text: e.source || "" }), el("span", { text: e.category.replaceAll("_", " ") }),
-        el("span", { class: d[0], text: `${d[1]} ${e.direction > 0 ? "+" : ""}${num(e.direction, 2)}` }), el("span", { text: `relevance ${Math.round(e.relevance * 100)}%` }),
-        el("span", { text: `confidence ${Math.round(e.confidence * 100)}%` }), el("span", { text: e.analyzer || "" })));
-    }) : [el("li", { class: "muted", text: list.length ? "No relevant events right now." : "DATA SOURCE UNAVAILABLE" })]));
+      const cat = I.has("cat." + e.category) ? t("cat." + e.category) : e.category.replaceAll("_", " ");
+      return el("li", {}, title, el("div", { class: "news-meta" }, el("span", { text: when(e.timestamp) }), el("span", { text: e.source || "" }), el("span", { text: cat }),
+        el("span", { class: d[0], text: `${t(d[1])} ${e.direction > 0 ? "+" : ""}${num(e.direction, 2)}` }), el("span", { text: t("news.relevance", { v: Math.round(e.relevance * 100) }) }),
+        el("span", { text: t("news.confidence", { v: Math.round(e.confidence * 100) }) }), el("span", { text: e.analyzer || "" })));
+    }) : [el("li", { class: "muted", text: list.length ? t("news.none_relevant") : t("common.unavailable") })]));
   }
   function renderProbe() {
-    const p = S.probe, t = $("probeTable");
-    if (!p) { t.replaceChildren(el("tr", {}, el("td", { class: "muted", text: "Not run yet. The test checks REST candles and live WebSocket data from this device." }))); return; }
-    t.replaceChildren(el("tr", {}, ...["Exchange", "REST candles", "Latency", "WebSocket", "Clock skew", "Diagnosis"].map((h) => el("th", { text: h }))),
-      ...EXCHANGES.map((ex) => { const r = p[ex] || {}, rs = r.rest, w = r.ws;
-        return el("tr", {}, el("td", { text: ex }),
-          el("td", { class: rs ? (rs.ok ? "st-good" : "st-bad") : "", text: rs ? (rs.ok ? `ok, candle ${rs.candleAgeSec} s old` : KIND_TEXT[rs.kind] || rs.kind) : "testing…" }),
-          el("td", { class: "num", text: rs ? rs.ms + " ms" : "" }),
-          el("td", { class: w ? (w.ok ? "st-good" : "st-bad") : "", text: w ? (w.ok ? `verified in ${(w.ms / 1000).toFixed(1)} s` : KIND_TEXT[w.kind] || w.kind) : "testing…" }),
-          el("td", { class: "num", text: w && isNum(w.skewMs) ? `${w.skewMs} ms` : "" }),
-          el("td", { class: "small muted wrap", text: [rs && !rs.ok ? `REST ${rs.host}: ${rs.error}` : "", w && !w.ok ? `WS: ${w.error}` : ""].filter(Boolean).join(" · ") }));
-      }));
+    const p = S.probe, tb = $("probeTable");
+    if (!p) { tb.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "muted", text: t("probe.not_run") })))); return; }
+    tb.replaceChildren(el("thead", {}, el("tr", {}, ...[t("ex.col.exchange"), t("probe.rest"), t("probe.latency"), "WebSocket", t("probe.skew"), t("probe.diagnosis")].map((h) => el("th", { text: h })))),
+      el("tbody", {}, ...EXCHANGES.map((ex) => { const r = p[ex] || {}, rs = r.rest, w = r.ws;
+        return el("tr", {}, el("td", { "data-label": t("ex.col.exchange"), text: ex }),
+          el("td", { class: rs ? (rs.ok ? "st-good" : "st-bad") : "", "data-label": t("probe.rest"), text: rs ? (rs.ok ? t("probe.rest_ok", { s: rs.candleAgeSec }) : `${rs.kind} (${kindText(rs.kind)})`) : t("probe.testing") }),
+          el("td", { class: "num", "data-label": t("probe.latency"), text: rs ? rs.ms + " " + t("unit.ms") : "" }),
+          el("td", { class: w ? (w.ok ? "st-good" : "st-bad") : "", "data-label": "WebSocket", text: w ? (w.ok ? t("probe.ws_ok", { s: num(w.ms / 1000, 1) }) : `${w.kind} (${kindText(w.kind)})`) : t("probe.testing") }),
+          el("td", { class: "num", "data-label": t("probe.skew"), text: w && isNum(w.skewMs) ? `${w.skewMs} ${t("unit.ms")}` : "" }),
+          el("td", { class: "small wrap", "data-label": t("probe.diagnosis") }, el("code", { class: "raw", text: [rs && !rs.ok ? `REST ${rs.host}: ${rs.error}` : "", w && !w.ok ? `WS: ${w.error}` : ""].filter(Boolean).join(" · ") })));
+      })));
   }
   async function runProbe() {
     S.probe = {}; renderProbe(); $("probeBtn").disabled = true;
@@ -562,7 +726,14 @@
     }));
     $("probeBtn").disabled = false; S.probe.ts = Date.now();
     const ok = EXCHANGES.filter((ex) => S.probe[ex].rest.ok && S.probe[ex].ws.ok);
-    toast(ok.length ? `Working from this device: ${ok.join(", ")}` : "No exchange fully reachable from this device");
+    toast(ok.length ? t("probe.working", { list: ok.join(", ") }) : t("probe.none"));
+  }
+  function renderNotifyInfo() {
+    const sv = server(), n = sv && sv.health && sv.health.notifications;
+    if (!n) { $("backendNotify").textContent = t(S.mode === "server" ? "notif.backend_unknown" : "notif.backend_local"); return; }
+    const ch = Object.entries(n.channels || {}).filter(([, on]) => on).map(([k]) => k);
+    $("backendNotify").textContent = t("notif.backend_info", { state: n.enabled && ch.length ? t("notif.on") : t("notif.off"), channels: ch.join(", ") || t("notif.no_channels"),
+      conf: pct(n.min_confidence, 0), q: pct(n.min_quality, 0), tfs: (n.timeframes || []).join(", ") || t("filter.all"), age: Math.round((n.max_age_sec || 0) / 60), lang: n.language || "ru" });
   }
 
   // ------------------------------------------------------------- charts
@@ -579,26 +750,26 @@
     const up = css("--up"), down = css("--down"), ink2 = css("--ink-2"), accent = css("--accent");
     if (S.tab === "book") {
       const st = S.streams[S.bookEx], bk = st && st.books[S.symbol]; let bids, asks, note;
-      if (bk && bk.ready && Date.now() - (bk.recv || 0) < 30000) { ({ bids, asks } = bk.top(20)); note = `${S.bookEx} live order book in this browser.`; }
-      else if (server() && v.serverBook && S.bookEx === v.primary && v.serverBook.bids && v.serverBook.bids.length) { bids = v.serverBook.bids; asks = v.serverBook.asks; note = `${v.primary} order book sampled by the backend ${ago(v.serverBook.recv_ms)} (not live).`; }
-      if (!bids) { empty(`DATA SOURCE UNAVAILABLE: no order book from ${S.bookEx}${st && st.error ? " (" + st.error + ")" : ""}`); $("chartNote").textContent = ""; return; }
+      if (bk && bk.ready && Date.now() - (bk.recv || 0) < 30000) { ({ bids, asks } = bk.top(20)); note = t("chart.book_live", { ex: S.bookEx }); }
+      else if (server() && v.serverBook && S.bookEx === v.primary && v.serverBook.bids && v.serverBook.bids.length) { bids = v.serverBook.bids; asks = v.serverBook.asks; note = t("chart.book_backend", { ex: v.primary, ago: ago(v.serverBook.recv_ms) }); }
+      if (!bids) { empty(t("chart.no_book", { ex: S.bookEx }) + (st && st.error ? ` (${st.error})` : "")); $("chartNote").textContent = ""; return; }
       empty(""); let cb = 0, ca = 0; const B = bids.map(([p, q]) => [p, (cb += q)]), Aa = asks.map(([p, q]) => [p, (ca += q)]), px = B.concat(Aa).map((x) => x[0]);
       const pmin = Math.min(...px), pmax = Math.max(...px), X = (p) => x0 + ((p - pmin) / (pmax - pmin || 1)) * (x1 - x0), sc = scaleOf([0, cb, ca], top, bottom, 0.02);
       axis(ctx, sc, x0, x1, top, bottom, (x) => num(x, 2));
       for (const [pts, col] of [[B, up], [Aa, down]]) { if (!pts.length) continue; ctx.fillStyle = col; ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.moveTo(X(pts[0][0]), sc.y(0)); pts.forEach(([p, c]) => ctx.lineTo(X(p), sc.y(c))); ctx.lineTo(X(pts[pts.length - 1][0]), sc.y(0)); ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = col; ctx.beginPath(); pts.forEach(([p, c], i) => (i ? ctx.lineTo(X(p), sc.y(c)) : ctx.moveTo(X(p), sc.y(c)))); ctx.stroke(); }
       ctx.fillStyle = ink2; ctx.textAlign = "center"; [pmin, (pmin + pmax) / 2, pmax].forEach((p) => ctx.fillText(priceFmt(p), Math.min(Math.max(X(p), 40), x1 - 30), bottom + 14));
-      $("chartNote").textContent = note; return;
+      $("chartNote").textContent = note + " " + t("chart.book_axes"); return;
     }
     if (S.tab === "cvd") {
       const st = S.streams[S.bookEx], f = st && st.flow[S.symbol], bars = f ? [...f.bars.values()] : []; let pts, note;
-      if (bars.length > 1) { pts = bars.map((b) => ({ t: b.open_ts, v: b.cvd })); note = `Live CVD from ${S.bookEx} trades in this browser (1-minute bars).`; }
-      else { pts = (v.candles || []).filter((c) => isNum(c.cvd)).map((c) => ({ t: c.open_ts, v: c.cvd })); if (!pts.length && v.candles && v.candles.length > 30) { const ind = A.computeIndicators(v.candles); pts = ind.open_ts.map((t, i) => ({ t, v: ind.cvd[i] })).filter((p) => isNum(p.v)); } note = pts.length ? `CVD from ${v.primary} taker-buy volume per ${S.tf} candle.` : ""; }
+      if (bars.length > 1) { pts = bars.map((b) => ({ t: b.open_ts, v: b.cvd })); note = t("chart.cvd_live", { ex: S.bookEx }); }
+      else { pts = (v.candles || []).filter((c) => isNum(c.cvd)).map((c) => ({ t: c.open_ts, v: c.cvd })); if (!pts.length && v.candles && v.candles.length > 30) { const ind = A.computeIndicators(v.candles); pts = ind.open_ts.map((x, i) => ({ t: x, v: ind.cvd[i] })).filter((p) => isNum(p.v)); } note = pts.length ? t("chart.cvd_candles", { ex: v.primary, tf: S.tf }) : ""; }
       $("chartNote").textContent = note;
-      if (pts.length < 2) { empty("DATA SOURCE UNAVAILABLE: no trade-flow data for CVD."); return; }
+      if (pts.length < 2) { empty(t("chart.no_cvd")); return; }
       empty(""); pts = pts.slice(-220); const xs = pts.map((_, i) => x0 + ((x1 - x0) / pts.length) * (i + 0.5)), sc = scaleOf(pts.map((p) => p.v), top, bottom);
       axis(ctx, sc, x0, x1, top, bottom, (x) => num(x, Math.abs(x) > 100 ? 0 : 2)); line(ctx, xs, pts.map((p) => p.v), sc, accent, 1.8); times(ctx, xs, pts.map((p) => p.t), bottom); hover(xs, (i) => `${when(pts[i].t)} CVD ${num(pts[i].v, 2)}`); return;
     }
-    if (!v.candles || v.candles.length < 30) { empty(`DATA SOURCE UNAVAILABLE: no candles. ${S.mode === "server" ? S.serverErr || "The backend has not exported candles yet." : primaryHint()}`); $("chartNote").textContent = ""; return; }
+    if (!v.candles || v.candles.length < 30) { empty(t("chart.no_candles") + " " + (S.mode === "server" ? S.serverErr || t("chart.not_exported") : primaryHint())); $("chartNote").textContent = ""; return; }
     empty(""); const full = A.computeIndicators(v.candles), k = Math.max(0, full.open_ts.length - 200), ind = {};
     for (const [n, a] of Object.entries(full)) ind[n] = Array.isArray(a) ? a.slice(k) : a;
     const n = ind.open_ts.length, bw = (x1 - x0) / n, xs = ind.open_ts.map((_, i) => x0 + bw * (i + 0.5)), ts = ind.open_ts;
@@ -607,58 +778,69 @@
       ctx.fillStyle = css("--grid"); ctx.globalAlpha = 0.7; ctx.beginPath(); ind.bb_upper.forEach((y, i) => isNum(y) && ctx.lineTo(xs[i], sc.y(y))); for (let i = n - 1; i >= 0; i--) if (isNum(ind.bb_lower[i])) ctx.lineTo(xs[i], sc.y(ind.bb_lower[i])); ctx.fill(); ctx.globalAlpha = 1;
       for (let i = 0; i < n; i++) { const col = ind.close[i] >= ind.open[i] ? up : down; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(xs[i], sc.y(ind.high[i])); ctx.lineTo(xs[i], sc.y(ind.low[i])); ctx.stroke(); const a = sc.y(ind.open[i]), b = sc.y(ind.close[i]), ww = Math.max(1, bw * 0.65); ctx.fillRect(xs[i] - ww / 2, Math.min(a, b), ww, Math.max(1, Math.abs(b - a))); }
       line(ctx, xs, ind.ema_21, sc, accent, 1.4); line(ctx, xs, ind.ema_55, sc, ink2, 1.2);
-      const idx = new Map(ts.map((t, i) => [t, i]));
+      const idx = new Map(ts.map((x, i) => [x, i]));
       for (const r of v.ledger) { if (r.prediction === "NO TRADE") continue; const i = idx.get(r.candle_ts); if (i === undefined) continue; const u = r.prediction === "UP", y = u ? sc.y(ind.low[i]) + 10 : sc.y(ind.high[i]) - 10; ctx.fillStyle = u ? up : down; ctx.beginPath(); ctx.moveTo(xs[i], y + (u ? -6 : 6)); ctx.lineTo(xs[i] - 5, y + (u ? 3 : -3)); ctx.lineTo(xs[i] + 5, y + (u ? 3 : -3)); ctx.fill(); }
-      times(ctx, xs, ts, bottom); $("chartNote").textContent = `${v.primary} ${S.tf} candles${server() ? " from the backend" : ""}. Blue EMA 21, grey EMA 55, band Bollinger 20/2, triangles = recorded UP/DOWN predictions.`;
-      hover(xs, (i) => `${when(ts[i])} O ${priceFmt(ind.open[i])} H ${priceFmt(ind.high[i])} L ${priceFmt(ind.low[i])} C ${priceFmt(ind.close[i])}`);
+      times(ctx, xs, ts, bottom); $("chartNote").textContent = t("chart.price_note", { ex: v.primary, tf: S.tf, src: server() ? t("chart.from_backend") : "" });
+      hover(xs, (i) => `${when(ts[i])} ${t("chart.o")} ${priceFmt(ind.open[i])} ${t("chart.h")} ${priceFmt(ind.high[i])} ${t("chart.l")} ${priceFmt(ind.low[i])} ${t("chart.c")} ${priceFmt(ind.close[i])}`);
     } else if (S.tab === "volume") {
       const sc = scaleOf(ind.volume.concat([0]), top, bottom, 0.02); axis(ctx, sc, x0, x1, top, bottom, (x) => num(x, x > 100 ? 0 : 2));
       ind.volume.forEach((vv, i) => { ctx.fillStyle = ind.close[i] >= ind.open[i] ? up : down; const y = sc.y(vv), ww = Math.max(1, bw * 0.7); ctx.fillRect(xs[i] - ww / 2, y, ww, sc.y(0) - y); });
-      times(ctx, xs, ts, bottom); $("chartNote").textContent = `Volume per ${S.tf} candle in base currency.`; hover(xs, (i) => `${when(ts[i])} volume ${num(ind.volume[i], 2)}`);
+      times(ctx, xs, ts, bottom); $("chartNote").textContent = t("chart.volume_note", { tf: S.tf }); hover(xs, (i) => `${when(ts[i])} ${t("chart.volume")} ${num(ind.volume[i], 2)}`);
     } else {
       const mid = top + (bottom - top) / 2, rs = scaleOf([0, 100], top, mid - 10, 0); axis(ctx, rs, x0, x1, top, mid - 10, (x) => x.toFixed(0));
       ctx.setLineDash([4, 4]); ctx.strokeStyle = ink2; [30, 70].forEach((l) => { ctx.beginPath(); ctx.moveTo(x0, rs.y(l)); ctx.lineTo(x1, rs.y(l)); ctx.stroke(); }); ctx.setLineDash([]);
       line(ctx, xs, ind.rsi_14, rs, accent); line(ctx, xs, ind.adx_14, rs, ink2, 1.1);
       const ms = scaleOf(ind.macd_hist.concat([0]), mid + 6, bottom); axis(ctx, ms, x0, x1, mid + 6, bottom, (x) => (x * 1e4).toFixed(1));
       ind.macd_hist.forEach((vv, i) => { if (!isNum(vv)) return; ctx.fillStyle = vv >= 0 ? up : down; const y = ms.y(vv), y0 = ms.y(0), ww = Math.max(1, bw * 0.6); ctx.fillRect(xs[i] - ww / 2, Math.min(y, y0), ww, Math.abs(y0 - y)); });
-      times(ctx, xs, ts, bottom); $("chartNote").textContent = "Top: RSI 14 (blue), ADX 14 (grey), lines at 30/70. Bottom: MACD histogram in basis points.";
-      hover(xs, (i) => `${when(ts[i])} RSI ${num(ind.rsi_14[i], 1)} ADX ${num(ind.adx_14[i], 1)} MACD ${num((ind.macd_hist[i] || 0) * 1e4, 2)} bps`);
+      times(ctx, xs, ts, bottom); $("chartNote").textContent = t("chart.ind_note");
+      hover(xs, (i) => `${when(ts[i])} RSI ${num(ind.rsi_14[i], 1)} ADX ${num(ind.adx_14[i], 1)} MACD ${num((ind.macd_hist[i] || 0) * 1e4, 2)} ${t("unit.bps")}`);
     }
   }
 
   // ------------------------------------------------------------- settings & actions
   const FIELDS = [["setAnthropicKey", "anthropicKey", "s"], ["setAnthropicModel", "anthropicModel", "s"], ["setNewsKey", "newsKey", "s"], ["setPrimary", "primary", "s"],
     ["setThreshold", "threshold", "n"], ["setEdge", "minEdge", "n"], ["setHorizon", "horizon", "i"], ["setMinLabels", "minNewLabels", "i"], ["setFee", "feeBps", "n"], ["setSlip", "slippageBps", "n"],
-    ["setNotify", "notifyEnabled", "b"], ["setNotifySignals", "notifySignals", "b"], ["setNotifyAll", "notifyAll", "b"], ["setNotifyOutages", "notifyOutages", "b"]];
-  function fillSettings() { for (const [id, k, t] of FIELDS) { if (t === "b") $(id).checked = !!S.settings[k]; else $(id).value = S.settings[k]; } $("localOnly").hidden = S.mode === "server"; }
+    ["setNotify", "notifyEnabled", "b"], ["setNotifySignals", "notifySignals", "b"], ["setNotifyAll", "notifyAll", "b"], ["setNotifyOutages", "notifyOutages", "b"],
+    ["setNotifyMinConf", "notifyMinConf", "n"], ["setNotifyMaxAge", "notifyMaxAgeMin", "n"]];
+  function fillSettings() { for (const [id, k, ty] of FIELDS) { if (ty === "b") $(id).checked = !!S.settings[k]; else $(id).value = S.settings[k]; } $("localOnly").hidden = S.mode === "server"; $("setLang").value = I.lang(); }
   async function saveSettings() {
     const before = { ...S.settings };
-    for (const [id, k, t] of FIELDS) { if (t === "b") { S.settings[k] = $(id).checked; continue; } const v = $(id).value.trim(); S.settings[k] = t === "s" ? v : t === "i" ? parseInt(v, 10) : parseFloat(v); if (t !== "s" && !isNum(S.settings[k])) S.settings[k] = before[k]; }
+    for (const [id, k, ty] of FIELDS) { if (ty === "b") { S.settings[k] = $(id).checked; continue; } const v = $(id).value.trim(); S.settings[k] = ty === "s" ? v : ty === "i" ? parseInt(v, 10) : parseFloat(v); if (ty !== "s" && !isNum(S.settings[k])) S.settings[k] = before[k]; }
     S.settings.threshold = Math.min(0.95, Math.max(0.34, S.settings.threshold)); S.settings.horizon = Math.min(24, Math.max(1, S.settings.horizon));
+    S.settings.notifyMinConf = Math.min(0.99, Math.max(0, S.settings.notifyMinConf)); S.settings.notifyMaxAgeMin = Math.min(240, Math.max(1, S.settings.notifyMaxAgeMin));
     if (S.settings.notifyEnabled && "Notification" in window && Notification.permission !== "granted") {
       const perm = await Notification.requestPermission().catch(() => "denied");
-      if (perm !== "granted") { S.settings.notifyEnabled = false; toast("Notifications were not allowed by the browser."); }
+      if (perm !== "granted") { S.settings.notifyEnabled = false; toast(t("toast.notif_denied")); }
     }
     await Store.set("settings", S.settings); $("settingsDialog").close();
+    if ($("setLang").value !== I.lang()) setLanguage($("setLang").value);
     if (S.mode === "local" && before.primary !== S.settings.primary) { S.primary = null; S.candles = {}; await pollLocal(); }
     if (S.mode === "local" && before.horizon !== S.settings.horizon) ensureModels();
-    toast(S.settings.notifyEnabled ? "Settings saved. Browser notifications are on while this page is open." : "Settings saved.");
+    toast(S.settings.notifyEnabled ? t("toast.saved_notif") : t("toast.saved"));
+    render();
+  }
+  // switching language re-renders texts only: models, ledger and streams stay untouched
+  function setLanguage(l) {
+    I.setLang(l);
+    $("lang").value = I.lang();
+    I.apply(document);
+    fillTfOptions(server() ? S.server.settings.predict_timeframes : S.settings.predictTfs);
     render();
   }
   function exportCsv() {
-    const v = view(), rows = v.ledger.slice().sort((a, b) => a.candle_ts - b.candle_ts);
-    const cols = ["prediction_id", "symbol", "timeframe", "exchange", "candle_ts", "created_ms", "price", "prediction", "model_direction", "p_up", "p_down", "p_flat", "confidence", "quality_score", "regime", "model_version", "features_version", "gate_reasons", "resolved_ms", "actual_price", "actual_return", "actual_direction", "error", "result", "error_class"];
+    const rows = ledgerRows().slice().sort((a, b) => a.candle_ts - b.candle_ts);
+    const cols = ["prediction_id", "symbol", "timeframe", "exchange", "candle_ts", "created_ms", "price", "prediction", "model_direction", "p_up", "p_down", "p_flat", "confidence", "label_threshold", "quality_score", "regime", "model_version", "features_version", "gate_reasons", "resolved_ms", "actual_price", "actual_return", "actual_direction", "error", "result", "error_class"];
     const csv = [cols.join(",")].concat(rows.map((r) => cols.map((c) => JSON.stringify(Array.isArray(r[c]) ? r[c].join("|") : r[c] ?? "")).join(","))).join("\n");
-    const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `prediction_ledger_${S.symbol.replace("/", "")}_${S.tf}_${new Date().toISOString().slice(0, 10)}.csv` });
-    document.body.append(a); a.click(); a.remove(); toast(`Exported ${rows.length} predictions`);
+    const a = el("a", { href: URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })), download: `prediction_ledger_${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.append(a); a.click(); a.remove(); toast(t("toast.exported", { n: rows.length }));
   }
   async function runBacktest() {
     const out = $("btResult");
-    if (S.mode === "server") { const m = view().model, bt = m && m.production && m.production.metrics.backtest; kv(out, bt && bt.trades ? [["Trades", bt.trades], ["Win rate", pct(bt.win_rate)], ["Avg gross / net", `${num(bt.avg_gross_bps, 1)} / ${num(bt.avg_net_bps, 1)} bps`], ["Total net return", pct(bt.total_net_return, 2)], ["Max drawdown", pct(bt.max_drawdown, 2)], ["Costs", `${num(bt.costs && bt.costs.round_trip_cost_bps, 1)} bps round trip`]] : [["Result", "No signal passed the gate in validation."]]); return; }
-    const p = production(keyOf(S.symbol, S.tf)); if (!p) { kv(out, [["Result", "MODEL NOT READY"]]); return; }
-    const oos = await Store.get(`oos:${p.version}`); if (!oos) { kv(out, [["Result", "No stored out-of-sample predictions for this version."]]); return; }
+    if (S.mode === "server") { const m = view().model, bt = m && m.production && m.production.metrics.backtest; kv(out, bt && bt.trades ? [[t("bt.trades"), bt.trades], [t("bt.win"), pct(bt.win_rate)], [t("bt.gross_net"), `${num(bt.avg_gross_bps, 1)} / ${num(bt.avg_net_bps, 1)} ${t("unit.bps")}`], [t("bt.total"), pct(bt.total_net_return, 2)], [t("bt.dd"), pct(bt.max_drawdown, 2)], [t("bt.costs"), `${num(bt.costs && bt.costs.round_trip_cost_bps, 1)} ${t("unit.bps")}`]] : [[t("bt.result"), t("model.no_signal_passed")]]); return; }
+    const p = production(keyOf(S.symbol, S.tf)); if (!p) { kv(out, [[t("bt.result"), "MODEL NOT READY"]]); return; }
+    const oos = await Store.get(`oos:${p.version}`); if (!oos) { kv(out, [[t("bt.result"), t("bt.no_oos")]]); return; }
     const r = A.backtest(oos, S.tf, S.settings.horizon, { threshold: +$("btThr").value, minEdge: S.settings.minEdge, feeBps: +$("btFee").value, slippageBps: +$("btSlip").value, spreadBps: +$("btSpread").value, latencyMs: +$("btLat").value });
-    kv(out, r.trades ? [["Trades", r.trades], ["Win rate", pct(r.win_rate)], ["Avg gross / net", `${num(r.avg_gross_bps, 1)} / ${num(r.avg_net_bps, 1)} bps`], ["Total net return", pct(r.total_net_return, 2)], ["Max drawdown", pct(r.max_drawdown, 2)], ["Round-trip cost", `${num(r.round_trip_cost_bps, 1)} bps`]] : [["Trades", 0], ["Note", "No signal passed the confidence gate."]]);
+    kv(out, r.trades ? [[t("bt.trades"), r.trades], [t("bt.win"), pct(r.win_rate)], [t("bt.gross_net"), `${num(r.avg_gross_bps, 1)} / ${num(r.avg_net_bps, 1)} ${t("unit.bps")}`], [t("bt.total"), pct(r.total_net_return, 2)], [t("bt.dd"), pct(r.max_drawdown, 2)], [t("bt.costs"), `${num(r.round_trip_cost_bps, 1)} ${t("unit.bps")}`]] : [[t("bt.trades"), 0], [t("bt.note"), t("model.no_signal_passed")]]);
   }
   function confirmInPage(msg, onYes) { $("confirmText").textContent = msg; $("confirmBox").hidden = false; $("confirmYes").onclick = () => { $("confirmBox").hidden = true; onYes(); }; $("confirmNo").onclick = () => ($("confirmBox").hidden = true); }
   function startStreams() { for (const ex of EXCHANGES) { if (S.streams[ex]) continue; const st = new C.ExchangeStream(ex, SYMBOLS, () => render()); S.streams[ex] = st; st.start(); } }
@@ -667,9 +849,18 @@
     startStreams(); render(); await pollLocal(); fetchNewsLocal(false);
     setInterval(pollLocal, 20000); setInterval(() => fetchNewsLocal(false), 5 * 60000); setInterval(learningCycleLocal, 10 * 60000); setTimeout(learningCycleLocal, 60000);
   }
+  function fillTfOptions(tfs) {
+    const cur = S.tf;
+    $("tf").replaceChildren(...tfs.map((x) => el("option", { value: x, text: x })));
+    S.tf = tfs.includes(cur) ? cur : tfs[0]; $("tf").value = S.tf;
+    const sel = $("fTf"), v = S.filter.tf;
+    sel.replaceChildren(el("option", { value: "current", text: t("filter.current") }), el("option", { value: "all", text: t("filter.all") }), ...tfs.map((x) => el("option", { value: x, text: x })));
+    sel.value = v;
+  }
 
   // ------------------------------------------------------------- boot
   async function boot() {
+    I.apply(document);
     await Store.open();
     try {
       S.settings = { ...DEFAULTS, ...((await Store.get("settings")) || {}) };
@@ -678,30 +869,31 @@
     } catch (e) { console.error(e); }
     const hasServer = await detectServer();
     S.mode = hasServer ? "server" : "local";
-    const tfs = S.settings.predictTfs;
-    S.tf = tfs[0];
     $("symbol").replaceChildren(...SYMBOLS.map((s) => el("option", { value: s, text: s })));
-    $("tf").replaceChildren(...tfs.map((t) => el("option", { value: t, text: t })));
+    $("fSymbol").replaceChildren(el("option", { value: "current", "data-i18n": "filter.current", text: t("filter.current") }), el("option", { value: "all", "data-i18n": "filter.all", text: t("filter.all") }), ...SYMBOLS.map((s) => el("option", { value: s, text: s })));
+    fillTfOptions(S.settings.predictTfs);
     $("bookEx").replaceChildren(...EXCHANGES.map((e) => el("option", { value: e, text: e })));
+    $("lang").value = I.lang();
+    $("lang").onchange = () => setLanguage($("lang").value);
     $("symbol").onchange = () => { S.symbol = $("symbol").value; render(); };
     $("tf").onchange = () => { S.tf = $("tf").value; render(); };
     $("bookEx").onchange = () => { S.bookEx = $("bookEx").value; render(); };
     $("startBtn").onclick = () => startLocal();
-    $("refreshBtn").onclick = async () => { $("refreshBtn").disabled = true; if (S.mode === "server") await fetchServer(true); else await pollLocal(); $("refreshBtn").disabled = false; toast("Refreshed"); };
+    $("refreshBtn").onclick = async () => { $("refreshBtn").disabled = true; if (S.mode === "server") await fetchServer(true); else await pollLocal(); $("refreshBtn").disabled = false; toast(t("toast.refreshed")); };
     $("settingsBtn").onclick = $("welcomeSettings").onclick = () => { fillSettings(); $("settingsDialog").showModal(); };
     $("settingsForm").onsubmit = (e) => { e.preventDefault(); saveSettings(); };
     $("settingsCancel").onclick = () => $("settingsDialog").close();
+    $("predDialogClose").onclick = () => $("predDialog").close();
     $("probeBtn").onclick = runProbe;
     $("newsBtn").onclick = () => (S.mode === "server" ? fetchServer(true) : fetchNewsLocal(true));
-    $("newsBtn").textContent = hasServer ? "Reload" : "Refresh news";
     $("learnBtn").hidden = hasServer; $("retrainBtn").hidden = hasServer;
-    $("learnBtn").onclick = () => { learningCycleLocal(); toast("Learning cycle started"); };
-    $("retrainBtn").onclick = () => confirmInPage(`Retrain the ${S.symbol} ${S.tf} baseline from scratch? The current model is archived.`, () => { const k = keyOf(S.symbol, S.tf); if (!S.jobs.some((j) => j.key === k)) S.jobs.push({ kind: "baseline", key: k, sym: S.symbol, tf: S.tf }); pump(); toast("Retraining started"); });
+    $("learnBtn").onclick = () => { learningCycleLocal(); toast(t("toast.learning_started")); };
+    $("retrainBtn").onclick = () => confirmInPage(t("confirm.retrain", { sym: S.symbol, tf: S.tf }), () => { const k = keyOf(S.symbol, S.tf); if (!S.jobs.some((j) => j.key === k)) S.jobs.push({ kind: "baseline", key: k, sym: S.symbol, tf: S.tf }); pump(); toast(t("toast.retrain_started")); });
     $("exportBtn").onclick = exportCsv;
-    $("ledgerFilter").onchange = () => { S.ledgerFilter = $("ledgerFilter").value; S.ledgerLimit = 50; render(); };
+    for (const [id, f] of [["ledgerFilter", "type"], ["fSymbol", "symbol"], ["fTf", "tf"], ["fModel", "model"], ["fPeriod", "period"]]) $(id).onchange = () => { S.filter[f] = $(id).value; S.ledgerLimit = 50; render(); };
     $("moreBtn").onclick = () => { S.ledgerLimit += 100; render(); };
     $("btForm").onsubmit = (e) => { e.preventDefault(); runBacktest(); };
-    $("resetBtn").onclick = () => { $("settingsDialog").close(); confirmInPage("Delete all models, predictions, news and settings stored in this browser?", async () => { await Store.clear(); location.reload(); }); };
+    $("resetBtn").onclick = () => { $("settingsDialog").close(); confirmInPage(t("confirm.reset"), async () => { await Store.clear(); location.reload(); }); };
     for (const b of $("chartTabs").querySelectorAll("button")) b.onclick = () => { S.tab = b.dataset.chart; $("chartTabs").querySelectorAll("button").forEach((x) => x.setAttribute("aria-selected", String(x === b))); render(); };
     $("btFee").value = S.settings.feeBps; $("btSlip").value = S.settings.slippageBps; $("btSpread").value = S.settings.spreadBps; $("btLat").value = S.settings.latencyMs; $("btThr").value = S.settings.threshold;
     $("btForm").hidden = hasServer;
@@ -711,6 +903,6 @@
     else if (S.settings.started) startLocal();
     render();
   }
-  window.AMPApp = { state: S };
+  window.AMPApp = { state: S, setLanguage };
   boot();
 })();

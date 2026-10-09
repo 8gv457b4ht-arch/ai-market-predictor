@@ -466,7 +466,8 @@
       if (new Set(ytr).size < 2) continue;
       const model = fitEnsemble(toMatrix(tr, features), ytr, features);
       const P = predictEnsemble(model, toMatrix(te, features));
-      te.forEach((r, i) => oos.push({ open_ts: r.open_ts, open: r.open, close: r.close, label: r.label, regime: r.regime, p: P[i] }));
+      const cnt = [1e-6, 1e-6, 1e-6]; ytr.forEach((v) => cnt[v]++); const tot = sum(cnt), naive = cnt.map((v) => v / tot);
+      te.forEach((r, i) => oos.push({ open_ts: r.open_ts, open: r.open, close: r.close, label: r.label, regime: r.regime, p: P[i], naive }));
       const yte = te.map((r) => r.label);
       foldInfo.push({ fold: k, train_rows: tr.length, test_rows: te.length, test_start: te[0].open_ts,
         log_loss: -mean(yte.map((t, i) => Math.log(Math.max(P[i][t], 1e-9)))), baseline: baseline(ytr, yte) });
@@ -475,9 +476,24 @@
     const y = oos.map((r) => r.label), P = oos.map((r) => r.p);
     const m = metrics(y, P, oos.map((r) => r.regime), opts.threshold || 0.55, opts.minEdge || 0.1);
     m.baseline_prior = baseline(d.slice(0, Math.max(0, start0 - horizon)).map((r) => r.label), y);
+    m.baseline_test = baselineTest(oos, horizon, opts.baselinePBetter || 0.95);
     m.folds = foldInfo;
     m.method = `expanding walk-forward, ${foldInfo.length} folds, purge ${horizon} bars, out-of-sample only`;
     return { metrics: m, oos };
+  }
+
+  // Model vs naive base rates on the same unseen rows: block bootstrap of the per-row log-loss gain.
+  function baselineTest(oos, horizon, pRequired, nBoot) {
+    const rows = oos.filter((r) => r.naive);
+    if (rows.length < 50) return null;
+    const diff = rows.map((r) => Math.log(Math.max(r.p[r.label], 1e-9)) - Math.log(Math.max(r.naive[r.label], 1e-9)));
+    const n = diff.length, block = Math.max(1, Math.min(horizon, n)), rnd = rng(11), nb = Math.ceil(n / block), B = nBoot || 1000, means = [];
+    for (let b = 0; b < B; b++) { let s = 0, c = 0; for (let k = 0; k < nb && c < n; k++) { const st = Math.floor(rnd() * (n - block + 1)); for (let q = 0; q < block && c < n; q++, c++) s += diff[st + q]; } means.push(s / n); }
+    means.sort((a, b) => a - b);
+    const gain = mean(diff), pBetter = means.filter((v) => v > 0).length / B;
+    return { n, gain, gain_ci95: [means[Math.floor(0.025 * B)], means[Math.floor(0.975 * B) - 1]], p_better: pBetter, p_required: pRequired,
+      log_loss_model: -mean(rows.map((r) => Math.log(Math.max(r.p[r.label], 1e-9)))), log_loss_naive: -mean(rows.map((r) => Math.log(Math.max(r.naive[r.label], 1e-9)))),
+      passed: gain > 0 && pBetter >= pRequired };
   }
 
   // ------------------------------------------------------- backtest
@@ -667,7 +683,7 @@
   const AMP = { TF_MS, CLASSES, FEATURE_VERSION, BASE_FEATURES, CONTEXT_FEATURES, REGIMES, rng, computeIndicators, classifyRegime,
     buildFrame, addLabels, trainingRows, labelThreshold, directionOf, toMatrix, fitLogReg, predictLogReg, fitForest, predictForest,
     fitBoost, predictBoost, fitEnsemble, predictEnsemble, gate, metrics, baseline, walkForward, backtest, blockBootstrapProb,
-    compareModels, missingBars, evaluateQuality, analyzeNewsRules, novelty, newsFeatures, trainBaseline, challengerCycle, isNum };
+    compareModels, baselineTest, missingBars, evaluateQuality, analyzeNewsRules, novelty, newsFeatures, trainBaseline, challengerCycle, isNum };
   root.AMP = AMP;
   if (typeof module !== "undefined" && module.exports) module.exports = AMP;
 })(typeof self !== "undefined" ? self : globalThis);

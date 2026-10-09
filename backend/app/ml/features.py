@@ -192,7 +192,15 @@ def add_labels(frame: pd.DataFrame, horizon: int, atr_mult: float, cost_bps: flo
     """fwd_return(t) = close[t+h]/close[t]-1. Rows whose future is unknown get label NaN."""
     f = frame.copy()
     f["fwd_return"] = f["close"].shift(-horizon) / f["close"] - 1
-    thr = label_threshold(f["atr_pct"].fillna(f["atr_pct"].median()), horizon, atr_mult, cost_bps)
+    ts = f["open_ts"].astype("int64") if "open_ts" in f else None
+    if ts is not None and len(ts) > 2:
+        bar = int(np.median(np.diff(ts.to_numpy())))
+        # the future close must be exactly `horizon` bars later in time, not just `horizon` rows later
+        # (a missing candle would otherwise silently stretch the horizon)
+        ok = (ts.shift(-horizon) - ts) == horizon * bar
+        f.loc[~ok, "fwd_return"] = np.nan
+    # warm-up rows without ATR use the cost floor (no look-ahead through a full-sample statistic)
+    thr = label_threshold(f["atr_pct"].fillna(0.0), horizon, atr_mult, cost_bps)
     f["label_threshold"] = thr
     lab = np.where(f["fwd_return"] > thr, 2, np.where(f["fwd_return"] < -thr, 0, 1)).astype(float)
     lab[f["fwd_return"].isna().to_numpy()] = np.nan

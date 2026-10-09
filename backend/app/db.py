@@ -22,7 +22,7 @@ from typing import Any, Iterable, Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Columns added after the first release: (table, column, type). Applied to existing databases.
 MIGRATIONS = [("predictions", "gate_json", "TEXT")]
@@ -107,6 +107,16 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS learning_events(
         id {pk}, ts_ms BIGINT NOT NULL, model_key TEXT, event_type TEXT NOT NULL,
         payload_json TEXT)""",
+    # every REST/WebSocket check of every exchange: error rates over time (audit finding A2)
+    """CREATE TABLE IF NOT EXISTS source_checks(
+        id {pk}, ts_ms BIGINT NOT NULL, exchange TEXT NOT NULL, channel TEXT NOT NULL,
+        ok INTEGER NOT NULL, kind TEXT, latency_ms BIGINT, host TEXT, detail TEXT, skew_ms BIGINT)""",
+    "CREATE INDEX IF NOT EXISTS ix_source_checks_ts ON source_checks(ts_ms)",
+    # candle closes for which no prediction was made (scheduler delay, outage): shown, never hidden
+    """CREATE TABLE IF NOT EXISTS prediction_gaps(
+        symbol TEXT NOT NULL, exchange TEXT NOT NULL, timeframe TEXT NOT NULL, candle_ts BIGINT NOT NULL,
+        detected_ms BIGINT NOT NULL, reason TEXT,
+        PRIMARY KEY(symbol, exchange, timeframe, candle_ts))""",
     """CREATE TABLE IF NOT EXISTS system_state(
         key TEXT PRIMARY KEY, value_json TEXT, updated_ms BIGINT NOT NULL)""",
 ]
@@ -265,6 +275,8 @@ class Database:
             "candles_1m": ("DELETE FROM candles WHERE timeframe='1m' AND open_ts < ?", t - int(settings.candles_1m_retention_days * d)),
             "news_events": ("DELETE FROM news_events WHERE published_ms < ?", t - int(settings.news_retention_days * d)),
             "learning_events": ("DELETE FROM learning_events WHERE ts_ms < ?", t - 180 * d),
+            "source_checks": ("DELETE FROM source_checks WHERE ts_ms < ?",
+                              t - int(getattr(settings, "source_checks_retention_days", 30) * d)),
         }
         out = {}
         for name, (sql, cutoff) in jobs.items():

@@ -76,7 +76,7 @@ def test_learning_cycle_baseline_wait_and_challenger(monkeypatch, tmp_path):
     versions = registry.list_versions(db, key)
     cand = [v for v in versions if v["version"] == r3["version"]][0]
     cmp_ = cand["comparison"]
-    assert cmp_["n_holdout"] >= 100 and set(cmp_["checks"]) == {"logloss_gain_ok", "bootstrap_ok", "brier_ok", "accuracy_ok"}
+    assert cmp_["n_holdout"] >= 100 and set(cmp_["checks"]) >= {"logloss_gain_ok", "bootstrap_ok", "brier_ok", "accuracy_ok", "both_halves_ok", "no_regime_worse"}
     # the holdout starts after production's training data + purge gap -> unseen by both models
     assert cand["params"]["holdout_start"] > prod["train_end_ts"] + 4 * 900_000
     assert cand["train_end_ts"] < cand["params"]["holdout_start"]
@@ -100,7 +100,12 @@ class StubModel:
         return np.tile(self.p, (len(X), 1))
 
 
-def _stub_production(db, s, p):
+PASSED_BASELINE = {"baseline_test": {"n": 500, "gain": 0.05, "gain_ci95": [0.02, 0.08], "p_better": 0.99,
+                                     "log_loss_model": 0.95, "log_loss_naive": 1.0, "passed": True},
+                   "backtest": {"trades": 40, "avg_net_bps": 3.0, "win_rate": 0.55}}
+
+
+def _stub_production(db, s, p, metrics=None):
     from backend.app.ml.dataset import build_training_frame
     frame, feats = build_training_frame(db, s, "BTC/USDT", "15m")
     key = registry.model_key("BTC/USDT", "15m", 4)
@@ -109,7 +114,8 @@ def _stub_production(db, s, p):
                                                         "feature_version": FEATURE_VERSION, "version": version})
     registry.register(db, version=version, key=key, status="production", train_start_ts=0,
                       train_end_ts=int(frame.open_ts.iloc[-1]), n_train=len(frame), n_validation=0,
-                      feature_version=FEATURE_VERSION, features=feats, params={}, metrics={}, comparison=None,
+                      feature_version=FEATURE_VERSION, features=feats, params={},
+                      metrics=PASSED_BASELINE if metrics is None else metrics, comparison=None,
                       artifact_path=path, parent_version=None, reason="test stub")
     return version
 

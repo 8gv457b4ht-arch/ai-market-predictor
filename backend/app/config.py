@@ -98,6 +98,12 @@ class Settings:
     bootstrap_confidence: float = field(default_factory=lambda: _float("LEARNING_BOOTSTRAP_CONFIDENCE", 0.90))
     walk_forward_folds: int = field(default_factory=lambda: _int("WALK_FORWARD_FOLDS", 5))
     min_train_rows: int = field(default_factory=lambda: _int("MIN_TRAIN_ROWS", 600))
+    # a model must beat the naive base-rate forecast out of sample before its signals are used
+    require_baseline_edge: bool = field(default_factory=lambda: _bool("REQUIRE_BASELINE_EDGE", True))
+    baseline_p_better: float = field(default_factory=lambda: _float("BASELINE_P_BETTER", 0.95))
+    # ... and its own out-of-sample signals must have earned a positive average after costs (enough of them)
+    require_cost_edge: bool = field(default_factory=lambda: _bool("REQUIRE_COST_EDGE", True))
+    min_oos_signals: int = field(default_factory=lambda: _int("MIN_OOS_SIGNALS", 30))
 
     # --- news --------------------------------------------------------------
     news_feeds: list[str] = field(default_factory=lambda: _list("NEWS_FEEDS", ",".join(DEFAULT_FEEDS)))
@@ -124,10 +130,24 @@ class Settings:
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", "").strip())
     dashboard_url: str = field(default_factory=lambda: os.getenv("DASHBOARD_URL", "").strip())
+    notify_enabled: bool = field(default_factory=lambda: _bool("NOTIFY_ENABLED", True))
+    notify_lang: str = field(default_factory=lambda: os.getenv("NOTIFY_LANG", "ru").strip().lower())
+    notify_min_confidence: float = field(default_factory=lambda: _float("NOTIFY_MIN_CONFIDENCE", 0.0))
+    notify_timeframes: list[str] = field(default_factory=lambda: _list("NOTIFY_TIMEFRAMES", ""))
+    notify_symbols: list[str] = field(default_factory=lambda: [x.upper() for x in _list("NOTIFY_SYMBOLS", "")])
+    notify_max_age_sec: float = field(default_factory=lambda: _float("NOTIFY_MAX_AGE_SEC", 600))
+    notify_min_quality: float = field(default_factory=lambda: _float("NOTIFY_MIN_QUALITY", 0.0))
+    control_dir: Path = field(default_factory=lambda: Path(os.getenv("CONTROL_DIR", str(ROOT / "control"))))
 
     # --- cloud (scheduled) mode --------------------------------------------
     ws_sample_sec: float = field(default_factory=lambda: _float("WS_SAMPLE_SEC", 45))
     public_dir: Path = field(default_factory=lambda: Path(os.getenv("PUBLIC_DIR", str(ROOT / "public"))))
+    # scheduled: periodic job (GitHub Actions); continuous: always-on process (VPS/Docker)
+    backend_mode: str = field(default_factory=lambda: os.getenv("BACKEND_MODE", "scheduled").strip().lower())
+    # scheduled mode: keep streams open and wait for the next candle close (at most this long) to predict on time
+    wait_close_max_sec: float = field(default_factory=lambda: _float("WAIT_CLOSE_MAX_SEC", 0))
+    close_settle_sec: float = field(default_factory=lambda: _float("CLOSE_SETTLE_SEC", 6))
+    source_checks_retention_days: float = field(default_factory=lambda: _float("SOURCE_CHECKS_RETENTION_DAYS", 30))
 
     # --- backup ------------------------------------------------------------
     backup_interval_sec: float = field(default_factory=lambda: _float("BACKUP_INTERVAL_SEC", 21600))

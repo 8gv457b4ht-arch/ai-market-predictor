@@ -1,0 +1,7 @@
+{
+  "commands": [
+    {"id": "2026-10-10-rollback-btc-15m", "action": "rollback", "model_key": "BTC/USDT|15m|h4"},
+    {"id": "2026-10-10-restore", "action": "restore_backup"},
+    {"id": "2026-10-10-backup", "action": "backup"}
+  ]
+}

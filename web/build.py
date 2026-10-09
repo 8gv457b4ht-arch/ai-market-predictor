@@ -2,7 +2,8 @@
 from pathlib import Path
 src = Path(__file__).parent / "src"
 html = (src / "index.html").read_text()
-for marker, f in (("/*CSS*/", "style.css"), ("/*CORE*/", "core.js"), ("/*CONNECTORS*/", "connectors.js"), ("/*APP*/", "app.js")):
+for marker, f in (("/*CSS*/", "style.css"), ("/*I18N*/", "i18n.js"), ("/*STATUS*/", "status.js"), ("/*CORE*/", "core.js"),
+                  ("/*CONNECTORS*/", "connectors.js"), ("/*APP*/", "app.js")):
     body = (src / f).read_text()
     assert "</script" not in body.lower(), f
     html = html.replace(marker, body, 1)

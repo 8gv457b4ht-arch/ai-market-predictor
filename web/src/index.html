@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -13,24 +13,25 @@
 <header class="top">
   <div class="brand">
     <h1>AI Market Predictor</h1>
-    <p class="sub"><span id="liveDot" class="live-dot st-bad"></span><span id="liveText">OFFLINE</span> · read-only research, no orders</p>
+    <p class="sub"><span id="liveDot" class="live-dot st-bad"></span><span id="liveText">OFFLINE</span>&nbsp;·&nbsp;<span data-i18n="top.readonly">только исследование, без ордеров</span></p>
   </div>
   <div class="controls">
-    <label>Asset <select id="symbol"></select></label>
-    <label>Timeframe <select id="tf"></select></label>
-    <button type="button" id="refreshBtn" class="btn">Refresh</button>
-    <button type="button" id="settingsBtn" class="btn ghost">Settings</button>
+    <label><span data-i18n="top.asset">Актив</span> <select id="symbol"></select></label>
+    <label><span data-i18n="top.timeframe">Таймфрейм</span> <select id="tf"></select></label>
+    <label><span data-i18n="top.language">Язык</span> <select id="lang"><option value="ru">Русский</option><option value="uk">Українська</option><option value="en">English</option></select></label>
+    <button type="button" id="refreshBtn" class="btn" data-i18n="top.refresh">Обновить</button>
+    <button type="button" id="settingsBtn" class="btn ghost" data-i18n="top.settings">Настройки</button>
   </div>
 </header>
 <p id="phase" class="phase" hidden></p>
 <p id="modeNote" class="mode-note small"></p>
 
 <section id="welcome" class="welcome" hidden>
-  <h2>Start the predictor</h2>
-  <p>Press Start and this page connects directly from your browser to the public market data of Binance, Bybit and OKX. No account or key is needed for prices, candles, trades and order books.</p>
-  <p>The first model is trained on real price history in your browser. It takes about a minute. Predictions, models and results are stored in this browser.</p>
-  <p class="small muted">Optional: add an Anthropic API key in Settings for AI news analysis.</p>
-  <div class="row"><button type="button" class="btn big" id="startBtn">Start</button><button type="button" class="btn ghost" id="welcomeSettings">Settings</button></div>
+  <h2 data-i18n="welcome.title">Запуск прогнозиста</h2>
+  <p data-i18n="welcome.p1"></p>
+  <p data-i18n="welcome.p2"></p>
+  <p class="small muted" data-i18n="welcome.p3"></p>
+  <div class="row"><button type="button" class="btn big" id="startBtn" data-i18n="welcome.start">Старт</button><button type="button" class="btn ghost" id="welcomeSettings" data-i18n="top.settings">Настройки</button></div>
 </section>
 
 <main class="layout">
@@ -39,122 +40,146 @@
     <div class="price-row"><div class="price" id="price">—</div><div class="change" id="change"></div></div>
     <p class="muted small" id="priceSource"></p>
     <div class="signal-block">
-      <div class="signal-label">AI prediction <span class="muted" id="horizon"></span></div>
+      <div class="signal-label"><span data-i18n="pred.title">Прогноз модели</span> <span class="muted" id="horizon"></span></div>
       <div class="signal" id="signal" data-state="none">—</div>
-      <div class="tribar" role="img" aria-label="Probabilities">
+      <div class="tribar" role="img" data-i18n-aria="pred.probabilities" aria-label="Вероятности">
         <div class="seg down" id="segDown"></div><div class="seg flat" id="segFlat"></div><div class="seg up" id="segUp"></div>
         <div class="threshold" id="threshold"></div>
       </div>
       <div class="probs">
-        <div><span class="dot down"></span>Down <b id="pDown">—</b></div>
-        <div><span class="dot flat"></span>Flat <b id="pFlat">—</b></div>
-        <div><span class="dot up"></span>Up <b id="pUp">—</b></div>
+        <div><span class="dot down"></span><span data-i18n="dir.DOWN">Падение</span> <b id="pDown">—</b></div>
+        <div><span class="dot flat"></span><span data-i18n="dir.FLAT">Боковик</span> <b id="pFlat">—</b></div>
+        <div><span class="dot up"></span><span data-i18n="dir.UP">Рост</span> <b id="pUp">—</b></div>
       </div>
       <dl class="facts">
-        <div><dt>Confidence</dt><dd id="confidence">—</dd></div>
-        <div><dt>Market regime</dt><dd id="regime">—</dd></div>
-        <div><dt>Data quality</dt><dd id="quality">—</dd></div>
-        <div><dt>News impact</dt><dd id="newsImpact">—</dd></div>
-        <div><dt>Spread</dt><dd id="spread">—</dd></div>
-        <div><dt>Book imbalance</dt><dd id="imbalance">—</dd></div>
+        <div><dt data-i18n="pred.confidence">Уверенность</dt><dd id="confidence">—</dd></div>
+        <div><dt data-i18n="pred.regime">Режим рынка</dt><dd id="regime">—</dd></div>
+        <div><dt data-i18n="pred.quality">Качество данных</dt><dd id="quality">—</dd></div>
+        <div><dt data-i18n="pred.news">Влияние новостей</dt><dd id="newsImpact">—</dd></div>
+        <div><dt data-i18n="pred.spread">Спред</dt><dd id="spread">—</dd></div>
+        <div><dt data-i18n="pred.imbalance">Дисбаланс стакана</dt><dd id="imbalance">—</dd></div>
       </dl>
       <p id="reasons" class="reasons"></p>
       <p id="predMeta" class="small muted"></p>
+      <details class="sub-block"><summary data-i18n="pred.details">Подробности прогноза</summary><div id="predDetails"></div></details>
     </div>
   </section>
 
-  <section class="charts" aria-label="Live chart">
+  <section class="charts" data-i18n-aria="chart.aria" aria-label="График">
     <div class="tabs" role="tablist" id="chartTabs">
-      <button role="tab" data-chart="price" aria-selected="true">Price</button>
-      <button role="tab" data-chart="volume" aria-selected="false">Volume</button>
+      <button role="tab" data-chart="price" aria-selected="true" data-i18n="chart.tab.price">Цена</button>
+      <button role="tab" data-chart="volume" aria-selected="false" data-i18n="chart.tab.volume">Объём</button>
       <button role="tab" data-chart="cvd" aria-selected="false">CVD</button>
-      <button role="tab" data-chart="book" aria-selected="false">Order book</button>
-      <button role="tab" data-chart="ind" aria-selected="false">Indicators</button>
-      <label class="tab-select">Exchange <select id="bookEx"></select></label>
+      <button role="tab" data-chart="book" aria-selected="false" data-i18n="chart.tab.book">Стакан</button>
+      <button role="tab" data-chart="ind" aria-selected="false" data-i18n="chart.tab.ind">Индикаторы</button>
+      <label class="tab-select"><span data-i18n="chart.exchange">Биржа</span> <select id="bookEx"></select></label>
     </div>
     <div class="chart-wrap"><canvas id="chart"></canvas><div class="chart-tip" id="chartTip" hidden></div><p class="chart-empty" id="chartEmpty" hidden></p></div>
     <p class="muted small" id="chartNote"></p>
   </section>
 
   <section class="panel system" aria-labelledby="sysTitle">
-    <div class="panel-head"><h3 id="sysTitle">System status</h3></div>
+    <div class="panel-head"><h3 id="sysTitle" data-i18n="sys.title">Состояние системы</h3></div>
+    <p class="small muted" data-i18n="sys.legend"></p>
     <dl class="status-grid" id="statusGrid"></dl>
-    <div class="table-scroll"><table class="tbl" id="exTable"></table></div>
-    <details class="sub-block" open><summary>Connection test from this device</summary>
-      <p class="small muted">Checks REST candles and timestamp-verified WebSocket data from each exchange directly from this phone or computer, and explains failures (region block, CORS, network, timeout, rate limit).</p>
-      <button type="button" class="btn small" id="probeBtn">Test connections</button>
-      <div class="table-scroll"><table class="tbl" id="probeTable"></table></div>
+    <details class="sub-block" open><summary data-i18n="sys.exchanges">Биржи: проверки и частота ошибок</summary>
+      <div class="table-scroll"><table class="tbl cards" id="exTable"></table></div>
+    </details>
+    <details class="sub-block" open><summary data-i18n="sys.probe_title">Проверка соединения с этого устройства</summary>
+      <p class="small muted" data-i18n="sys.probe_text"></p>
+      <button type="button" class="btn small" id="probeBtn" data-i18n="sys.probe_btn">Проверить соединения</button>
+      <div class="table-scroll"><table class="tbl cards" id="probeTable"></table></div>
     </details>
   </section>
 
   <section class="panel news" aria-labelledby="newsTitle">
-    <div class="panel-head"><h3 id="newsTitle">News intelligence</h3><button type="button" class="btn small" id="newsBtn">Refresh news</button></div>
+    <div class="panel-head"><h3 id="newsTitle" data-i18n="news.title">Новости</h3><button type="button" class="btn small" id="newsBtn" data-i18n="top.refresh">Обновить</button></div>
     <p class="muted small" id="newsStatus"></p>
     <ul class="news-list" id="newsList"></ul>
   </section>
 
   <section class="panel model" aria-labelledby="modelTitle">
-    <div class="panel-head"><h3 id="modelTitle">Model</h3>
-      <div class="row"><button type="button" class="btn small" id="learnBtn">Run learning cycle</button><button type="button" class="btn small ghost" id="retrainBtn">Retrain baseline</button></div></div>
+    <div class="panel-head"><h3 id="modelTitle" data-i18n="model.title">Модель</h3>
+      <div class="row"><button type="button" class="btn small" id="learnBtn" data-i18n="model.learn_btn">Цикл обучения</button><button type="button" class="btn small ghost" id="retrainBtn" data-i18n="model.retrain_btn">Переобучить</button></div></div>
     <dl class="kv" id="modelKv"></dl>
-    <details class="sub-block" open><summary>Why NO TRADE</summary><div id="whyNoTrade"></div></details>
-    <details class="sub-block"><summary>Backtest with costs</summary>
+    <details class="sub-block" open><summary data-i18n="model.why_title">Почему NO TRADE</summary><div id="whyNoTrade"></div></details>
+    <details class="sub-block"><summary data-i18n="model.regimes_title">Качество по режимам рынка (вне выборки)</summary><div class="table-scroll"><table class="tbl cards" id="regimeTable"></table></div></details>
+    <details class="sub-block"><summary data-i18n="model.changes_title">Отчёт об изменениях модели</summary><ul class="changes" id="changes"></ul></details>
+    <details class="sub-block"><summary data-i18n="model.bt_title">Бэктест с издержками</summary>
       <form class="bt-form" id="btForm">
-        <label>Fee, bps/side <input type="number" id="btFee" step="0.5" min="0"></label>
-        <label>Slippage, bps/side <input type="number" id="btSlip" step="0.5" min="0"></label>
-        <label>Spread, bps <input type="number" id="btSpread" step="0.5" min="0"></label>
-        <label>Latency, ms <input type="number" id="btLat" step="100" min="0"></label>
-        <label>Threshold <input type="number" id="btThr" step="0.01" min="0.34" max="0.99"></label>
-        <button type="submit" class="btn small">Run backtest</button>
+        <label><span data-i18n="bt.fee">Комиссия, б.п./сторона</span> <input type="number" id="btFee" step="0.5" min="0"></label>
+        <label><span data-i18n="bt.slip">Проскальзывание, б.п./сторона</span> <input type="number" id="btSlip" step="0.5" min="0"></label>
+        <label><span data-i18n="bt.spread">Спред, б.п.</span> <input type="number" id="btSpread" step="0.5" min="0"></label>
+        <label><span data-i18n="bt.latency">Задержка, мс</span> <input type="number" id="btLat" step="100" min="0"></label>
+        <label><span data-i18n="bt.threshold">Порог</span> <input type="number" id="btThr" step="0.01" min="0.34" max="0.99"></label>
+        <button type="submit" class="btn small" data-i18n="bt.run">Запустить</button>
       </form>
       <dl class="kv" id="btResult"></dl>
     </details>
-    <details class="sub-block"><summary>Model versions</summary><div class="table-scroll"><table class="tbl" id="versions"></table></div></details>
+    <details class="sub-block"><summary data-i18n="model.versions_title">Версии модели</summary><div class="table-scroll"><table class="tbl cards" id="versions"></table></div></details>
   </section>
 
   <section class="panel ledger" aria-labelledby="ledgerTitle">
-    <div class="panel-head"><h3 id="ledgerTitle">Prediction ledger</h3><div class="row"><span class="muted small" id="ledgerStats"></span>
-      <label class="tab-select">Show <select id="ledgerFilter"><option value="all">All</option><option value="signals">UP/DOWN only</option><option value="resolved">Resolved</option><option value="notrade">NO TRADE</option></select></label>
-      <button type="button" class="btn small ghost" id="exportBtn">Export CSV</button></div></div>
-    <div class="table-scroll"><table class="tbl" id="ledger"></table></div>
-    <button type="button" class="btn small ghost" id="moreBtn" hidden>Show more</button>
+    <div class="panel-head"><h3 id="ledgerTitle" data-i18n="ledger.title">Журнал прогнозов</h3>
+      <button type="button" class="btn small ghost" id="exportBtn" data-i18n="ledger.export">Экспорт CSV</button></div>
+    <div class="filters">
+      <label><span data-i18n="filter.type">Показать</span> <select id="ledgerFilter"><option value="all" data-i18n="filter.type_all">Все</option><option value="signals" data-i18n="filter.type_signals">Только UP/DOWN</option><option value="resolved" data-i18n="filter.type_resolved">Проверенные</option><option value="notrade" data-i18n="filter.type_notrade">NO TRADE</option></select></label>
+      <label><span data-i18n="filter.asset">Актив</span> <select id="fSymbol"></select></label>
+      <label><span data-i18n="filter.tf">Таймфрейм</span> <select id="fTf"></select></label>
+      <label><span data-i18n="filter.model">Модель</span> <select id="fModel"></select></label>
+      <label><span data-i18n="filter.period">Период</span> <select id="fPeriod"><option value="all" data-i18n="filter.period_all">Всё время</option><option value="24h" data-i18n="filter.period_24h">24 часа</option><option value="7d" data-i18n="filter.period_7d">7 дней</option><option value="30d" data-i18n="filter.period_30d">30 дней</option></select></label>
+    </div>
+    <p class="muted small" id="ledgerStats"></p>
+    <div class="table-scroll"><table class="tbl cards" id="ledger"></table></div>
+    <button type="button" class="btn small ghost" id="moreBtn" hidden data-i18n="ledger.more">Показать ещё</button>
   </section>
 </main>
 
 <dialog id="settingsDialog">
   <form id="settingsForm">
-    <h3>Settings</h3>
-    <p class="small muted">Market data needs no keys. Keys are stored only in this browser and sent only to the service they belong to.</p>
-    <fieldset><legend>Local mode: News AI</legend>
-      <label>Anthropic API key <input type="password" id="setAnthropicKey" autocomplete="off" placeholder="sk-ant-…"></label>
-      <div class="row"><button type="button" class="btn small ghost" id="keyTestBtn">Test key</button><span id="keyTest" class="small muted"></span></div>
-      <label>Claude model <input type="text" id="setAnthropicModel"></label>
-      <label>News feed API key (optional, CoinDesk / CryptoCompare) <input type="password" id="setNewsKey" autocomplete="off"></label>
-    </fieldset>
-    <fieldset><legend>Notifications</legend>
-      <label class="check"><input type="checkbox" id="setNotify"> Browser notifications while this page is open</label>
-      <label class="check"><input type="checkbox" id="setNotifySignals"> New UP/DOWN predictions</label>
-      <label class="check"><input type="checkbox" id="setNotifyAll"> Every prediction, including NO TRADE</label>
-      <label class="check"><input type="checkbox" id="setNotifyOutages"> Exchange data source down or back</label>
-      <p class="small muted">For 24/7 phone alerts, the backend sends to ntfy or Telegram (set up once in the GitHub repository secrets, see the README).</p>
-    </fieldset>
-    <fieldset id="localOnly"><legend>Local mode: market data and model</legend>
-      <label>Exchange for model history <select id="setPrimary"><option value="auto">Automatic (first reachable)</option><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label>
+    <h3 data-i18n="set.title">Настройки</h3>
+    <label><span data-i18n="top.language">Язык</span> <select id="setLang"><option value="ru">Русский</option><option value="uk">Українська</option><option value="en">English</option></select></label>
+    <p class="small muted" data-i18n="set.keys_note"></p>
+    <fieldset><legend data-i18n="set.notif_title">Уведомления</legend>
+      <label class="check"><input type="checkbox" id="setNotify"> <span data-i18n="set.notif_browser">Уведомления браузера, пока страница открыта</span></label>
+      <label class="check"><input type="checkbox" id="setNotifySignals"> <span data-i18n="set.notif_signals">Новые прогнозы UP/DOWN</span></label>
+      <label class="check"><input type="checkbox" id="setNotifyAll"> <span data-i18n="set.notif_all">Все прогнозы, включая NO TRADE</span></label>
+      <label class="check"><input type="checkbox" id="setNotifyOutages"> <span data-i18n="set.notif_outages">Отключение и восстановление бирж</span></label>
       <div class="grid2">
-        <label>Confidence threshold <input type="number" id="setThreshold" step="0.01" min="0.34" max="0.95"></label>
-        <label>Minimum edge <input type="number" id="setEdge" step="0.01" min="0" max="0.9"></label>
-        <label>Horizon, bars <input type="number" id="setHorizon" step="1" min="1" max="24"></label>
-        <label>New labels before a challenger <input type="number" id="setMinLabels" step="10" min="100"></label>
-        <label>Fee, bps/side <input type="number" id="setFee" step="0.5" min="0"></label>
-        <label>Slippage, bps/side <input type="number" id="setSlip" step="0.5" min="0"></label>
+        <label><span data-i18n="set.notif_min_conf">Минимальная уверенность сигнала (0–0,99)</span> <input type="number" id="setNotifyMinConf" step="0.01" min="0" max="0.99"></label>
+        <label><span data-i18n="set.notif_max_age">Не уведомлять, если прогноз старше, мин</span> <input type="number" id="setNotifyMaxAge" step="1" min="1" max="240"></label>
+      </div>
+      <p class="small muted" id="backendNotify"></p>
+      <p class="small muted" data-i18n="set.notif_backend_howto"></p>
+    </fieldset>
+    <fieldset><legend data-i18n="set.news_title">Локальный режим: анализ новостей</legend>
+      <label><span data-i18n="set.anthropic_key">Ключ Anthropic API</span> <input type="password" id="setAnthropicKey" autocomplete="off" placeholder="sk-ant-…"></label>
+      <label><span data-i18n="set.claude_model">Модель Claude</span> <input type="text" id="setAnthropicModel"></label>
+      <label><span data-i18n="set.news_key">Ключ новостного API (необязательно, CoinDesk / CryptoCompare)</span> <input type="password" id="setNewsKey" autocomplete="off"></label>
+    </fieldset>
+    <fieldset id="localOnly"><legend data-i18n="set.local_title">Локальный режим: данные и модель</legend>
+      <label><span data-i18n="set.primary">Биржа для истории модели</span> <select id="setPrimary"><option value="auto" data-i18n="set.primary_auto">Автоматически (первая доступная)</option><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label>
+      <div class="grid2">
+        <label><span data-i18n="set.threshold">Порог уверенности</span> <input type="number" id="setThreshold" step="0.01" min="0.34" max="0.95"></label>
+        <label><span data-i18n="set.edge">Минимальный перевес</span> <input type="number" id="setEdge" step="0.01" min="0" max="0.9"></label>
+        <label><span data-i18n="set.horizon">Горизонт, свечей</span> <input type="number" id="setHorizon" step="1" min="1" max="24"></label>
+        <label><span data-i18n="set.min_labels">Новых меток до претендента</span> <input type="number" id="setMinLabels" step="10" min="100"></label>
+        <label><span data-i18n="bt.fee">Комиссия, б.п./сторона</span> <input type="number" id="setFee" step="0.5" min="0"></label>
+        <label><span data-i18n="bt.slip">Проскальзывание, б.п./сторона</span> <input type="number" id="setSlip" step="0.5" min="0"></label>
       </div>
     </fieldset>
-    <div class="row between"><button type="button" class="btn small danger" id="resetBtn">Delete local data</button>
-      <div class="row"><button type="button" class="btn ghost" id="settingsCancel">Cancel</button><button type="submit" class="btn">Save</button></div></div>
+    <div class="row between"><button type="button" class="btn small danger" id="resetBtn" data-i18n="set.reset">Удалить локальные данные</button>
+      <div class="row"><button type="button" class="btn ghost" id="settingsCancel" data-i18n="common.cancel">Отмена</button><button type="submit" class="btn" data-i18n="common.save">Сохранить</button></div></div>
   </form>
 </dialog>
-<div class="confirm" id="confirmBox" hidden><p id="confirmText"></p><div class="row"><button type="button" class="btn ghost" id="confirmNo">Cancel</button><button type="button" class="btn danger" id="confirmYes">Confirm</button></div></div>
+<dialog id="predDialog" class="wide">
+  <div class="row between dlg-head"><h3 id="predDialogTitle"></h3><button type="button" class="btn small ghost" id="predDialogClose" data-i18n="common.close">Закрыть</button></div>
+  <div id="predDialogBody"></div>
+</dialog>
+<div class="confirm" id="confirmBox" hidden><p id="confirmText"></p><div class="row"><button type="button" class="btn ghost" id="confirmNo" data-i18n="common.cancel">Отмена</button><button type="button" class="btn danger" id="confirmYes" data-i18n="common.confirm">Подтвердить</button></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script>/*I18N*/</script>
+<script>/*STATUS*/</script>
 <script id="amp-core">/*CORE*/</script>
 <script>/*CONNECTORS*/</script>
 <script>/*APP*/</script>

@@ -1,0 +1,2308 @@
+{
+ "generated_utc": "2026-10-09 12:39",
+ "exchange": "binance",
+ "horizon_bars": 4,
+ "round_trip_cost_bps": 25.0,
+ "protocol": "Protocol (decided before looking at results, to avoid picking a winner on one lucky period):\n  * per market (symbol x timeframe) the labelled rows are split chronologically:\n      development = first 70 %, final holdout = last 30 % (minus a purge gap of `horizon` bars)\n  * candidates are compared ONLY on development, with a purged expanding walk-forward (4 folds)\n  * one configuration is chosen for ALL markets: best mean log-loss gain vs the naive base rates on development\n  * the chosen configuration, the current production procedure and the naive baseline are then\n    evaluated ONCE on the final holdout; results are reported with block-bootstrap 95 % intervals\n  * metrics: log loss, Brier, ECE, accuracy, macro precision/recall, signal coverage/hit rate at the\n    production gate, average result per signal after costs; per market regime as well",
+ "markets": {
+  "BTC/USDT 15m": {
+   "rows": 4943,
+   "from": 1787093100000,
+   "to": 1791540900000,
+   "label_share": {
+    "DOWN": 0.1650819340481489,
+    "FLAT": 0.6451547643131701,
+    "UP": 0.18976330163868096
+   },
+   "median_threshold_bps": 25.0,
+   "threshold_is_cost_floor_share": 0.8970260975116326,
+   "median_abs_move_bps": 17.04426099620737,
+   "duplicate_timestamps": 0,
+   "n_features": 79,
+   "feature_groups": {
+    "trend": 30,
+    "momentum": 23,
+    "volatility": 10,
+    "volume_flow": 11,
+    "regime": 5,
+    "other": 0
+   }
+  },
+  "BTC/USDT 1h": {
+   "rows": 4937,
+   "from": 1773756000000,
+   "to": 1791525600000,
+   "label_share": {
+    "DOWN": 0.25967186550536764,
+    "FLAT": 0.47761798663155763,
+    "UP": 0.26271014786307473
+   },
+   "median_threshold_bps": 32.2229912644948,
+   "threshold_is_cost_floor_share": 0.25035446627506586,
+   "median_abs_move_bps": 34.99264307287198,
+   "duplicate_timestamps": 0,
+   "n_features": 55,
+   "feature_groups": {
+    "trend": 20,
+    "momentum": 15,
+    "volatility": 8,
+    "volume_flow": 7,
+    "regime": 5,
+    "other": 0
+   }
+  },
+  "ETH/USDT 15m": {
+   "rows": 4943,
+   "from": 1787093100000,
+   "to": 1791540900000,
+   "label_share": {
+    "DOWN": 0.19866477847461056,
+    "FLAT": 0.5721221930002023,
+    "UP": 0.22921302852518713
+   },
+   "median_threshold_bps": 25.0,
+   "threshold_is_cost_floor_share": 0.730528019421404,
+   "median_abs_move_bps": 21.83641659567637,
+   "duplicate_timestamps": 0,
+   "n_features": 79,
+   "feature_groups": {
+    "trend": 30,
+    "momentum": 23,
+    "volatility": 10,
+    "volume_flow": 11,
+    "regime": 5,
+    "other": 0
+   }
+  },
+  "ETH/USDT 1h": {
+   "rows": 4937,
+   "from": 1773756000000,
+   "to": 1791525600000,
+   "label_share": {
+    "DOWN": 0.2572412396192019,
+    "FLAT": 0.4751873607453919,
+    "UP": 0.2675713996354061
+   },
+   "median_threshold_bps": 42.62389630478306,
+   "threshold_is_cost_floor_share": 0.10451691310512456,
+   "median_abs_move_bps": 44.39793816712112,
+   "duplicate_timestamps": 0,
+   "n_features": 55,
+   "feature_groups": {
+    "trend": 20,
+    "momentum": 15,
+    "volatility": 8,
+    "volume_flow": 7,
+    "regime": 5,
+    "other": 0
+   }
+  }
+ },
+ "development": {
+  "ensemble_current": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9453451456676514,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.07334831458822796,
+    "gain_ci95": [
+     -0.10408750079955388,
+     -0.04303856627247134
+    ],
+    "p_better": 0.0,
+    "brier": 0.5453405300850179,
+    "ece": 0.12324258044656236,
+    "accuracy": 0.6498073217726397,
+    "precision_macro": 0.3457551646105555,
+    "recall_macro": 0.33602895028908536,
+    "signals": 31,
+    "coverage": 0.014932562620423893,
+    "hit_rate": 0.16129032258064516,
+    "avg_net_bps_per_signal": -36.39381483996268,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.1592831401321589
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.06441360419443631
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.07509299932575922
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.04913040565578632
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0924386465137537,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.029088732720194486,
+    "gain_ci95": [
+     -0.045550328716571505,
+     -0.012343198320363773
+    ],
+    "p_better": 0.0005,
+    "brier": 0.6573354531273318,
+    "ece": 0.03373225102638471,
+    "accuracy": 0.43077665219488664,
+    "precision_macro": 0.3418872589635004,
+    "recall_macro": 0.3484067455594814,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.06845897567526596
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.0733028598043049
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.0209438178157405
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.01756899333071813
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0342019954643147,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.048481804182598016,
+    "gain_ci95": [
+     -0.07221047729476074,
+     -0.026548035917432575
+    ],
+    "p_better": 0.0,
+    "brier": 0.6136443833851052,
+    "ece": 0.10482767194560794,
+    "accuracy": 0.5423892100192679,
+    "precision_macro": 0.3339604430036848,
+    "recall_macro": 0.3356469230806007,
+    "signals": 17,
+    "coverage": 0.008188824662813102,
+    "hit_rate": 0.29411764705882354,
+    "avg_net_bps_per_signal": -35.81646809122999,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.03889263311072192
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.011597877185471488
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.05677719832690206
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.048116089790375856
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0631588849986953,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": 0.0027379912119522604,
+    "gain_ci95": [
+     -0.00836522700074897,
+     0.013842844278983602
+    ],
+    "p_better": 0.6955,
+    "brier": 0.6411371723521102,
+    "ece": 0.007943029943136027,
+    "accuracy": 0.4544138929088278,
+    "precision_macro": 0.3517851895386424,
+    "recall_macro": 0.33445138753613524,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.02527922980445051
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.020618299259602013
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.004569379153170664
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.0029003521758699333
+     }
+    }
+   }
+  },
+  "logreg": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0207524502106615,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.14875561913123803,
+    "gain_ci95": [
+     -0.19287198386279641,
+     -0.10739920597722817
+    ],
+    "p_better": 0.0,
+    "brier": 0.5787214871544869,
+    "ece": 0.1157702969495113,
+    "accuracy": 0.5380539499036608,
+    "precision_macro": 0.3252873214073533,
+    "recall_macro": 0.3186700869787718,
+    "signals": 22,
+    "coverage": 0.010597302504816955,
+    "hit_rate": 0.4090909090909091,
+    "avg_net_bps_per_signal": -22.58649639553818,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.2455583767466882
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": -0.012979039682153888
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.16176857622871335
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.1025433177482515
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.2164188707328296,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.15306895693927075,
+    "gain_ci95": [
+     -0.19396173144753825,
+     -0.1147778558097868
+    ],
+    "p_better": 0.0,
+    "brier": 0.7219672946834411,
+    "ece": 0.14447530051795016,
+    "accuracy": 0.36999517607332366,
+    "precision_macro": 0.3465632348452606,
+    "recall_macro": 0.34510159855368344,
+    "signals": 670,
+    "coverage": 0.32320308731307285,
+    "hit_rate": 0.291044776119403,
+    "avg_net_bps_per_signal": -22.573611158250458,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.25026614409277176
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.2250446096711574
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.13727102955972978
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.12488271506653405
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0896511002597895,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.10393090897807271,
+    "gain_ci95": [
+     -0.13512638445760713,
+     -0.07432523599767674
+    ],
+    "p_better": 0.0,
+    "brier": 0.6436879041892647,
+    "ece": 0.13761151652028708,
+    "accuracy": 0.47880539499036606,
+    "precision_macro": 0.31996414878893714,
+    "recall_macro": 0.3184593744123492,
+    "signals": 2,
+    "coverage": 0.0009633911368015414,
+    "hit_rate": 0.5,
+    "avg_net_bps_per_signal": 6.975483715105391,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.07429042126499241
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.07212893350813704
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.12153130433439828
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.09899538596360391
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0753860813034666,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.009489205092818814,
+    "gain_ci95": [
+     -0.028245364136099852,
+     0.010480732517698644
+    ],
+    "p_better": 0.169,
+    "brier": 0.6519880402239807,
+    "ece": 0.0430355748141698,
+    "accuracy": 0.43945972021225277,
+    "precision_macro": 0.37599975793172513,
+    "recall_macro": 0.3571028731323727,
+    "signals": 143,
+    "coverage": 0.06898215147129763,
+    "hit_rate": 0.3986013986013986,
+    "avg_net_bps_per_signal": 6.804124773792681,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.027755817840502663
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.021005784431976888
+     },
+     "ranging": {
+      "n": 884,
+      "gain": -0.004616765433021394
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.02457262036981753
+     }
+    }
+   }
+  },
+  "logreg_strong_l2": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9655367020615775,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.09353987098215387,
+    "gain_ci95": [
+     -0.1295214863596967,
+     -0.05761005494974156
+    ],
+    "p_better": 0.0,
+    "brier": 0.5488840493080155,
+    "ece": 0.1414729049583925,
+    "accuracy": 0.6507707129094412,
+    "precision_macro": 0.38041716732183684,
+    "recall_macro": 0.3518019656247151,
+    "signals": 16,
+    "coverage": 0.007707129094412331,
+    "hit_rate": 0.375,
+    "avg_net_bps_per_signal": -30.012502224393877,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.1887261491758814
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.034943446197458095
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.08091549659263239
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.08105946238491002
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.1273371501660503,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.06398723637249128,
+    "gain_ci95": [
+     -0.08753488351455577,
+     -0.041063614576883914
+    ],
+    "p_better": 0.0,
+    "brier": 0.6738193035384741,
+    "ece": 0.047499830887880984,
+    "accuracy": 0.41148094548962855,
+    "precision_macro": 0.34747373480849114,
+    "recall_macro": 0.34990504123544874,
+    "signals": 60,
+    "coverage": 0.02894356005788712,
+    "hit_rate": 0.35,
+    "avg_net_bps_per_signal": -30.20618549736309,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.168235040112171
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.09801378929246264
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.045110948695761086
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.04456674750598416
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0456868038114409,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.059966612529723885,
+    "gain_ci95": [
+     -0.08641684356437859,
+     -0.0348584155586361
+    ],
+    "p_better": 0.0,
+    "brier": 0.6192982309325673,
+    "ece": 0.1355687367121585,
+    "accuracy": 0.5626204238921002,
+    "precision_macro": 0.46540506685072985,
+    "recall_macro": 0.34388078960544627,
+    "signals": 29,
+    "coverage": 0.013969171483622351,
+    "hit_rate": 0.2413793103448276,
+    "avg_net_bps_per_signal": -35.8897852200307,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.03381563580496672
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.007923332124172552
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.0665352324254535
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.0689340234030028
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0650344963155638,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": 0.0008623798950836059,
+    "gain_ci95": [
+     -0.011679211584440128,
+     0.013891035678356006
+    ],
+    "p_better": 0.5685,
+    "brier": 0.6422201691832006,
+    "ece": 0.02283157940600059,
+    "accuracy": 0.46068499758803666,
+    "precision_macro": 0.42403868851358445,
+    "recall_macro": 0.3484502631184007,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.02842090832342475
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.022585143234515534
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.004629171815154968
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.007446843088294755
+     }
+    }
+   }
+  },
+  "random_forest": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9191197448069568,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.0471229137275333,
+    "gain_ci95": [
+     -0.07750939837366816,
+     -0.018400788727508496
+    ],
+    "p_better": 0.0,
+    "brier": 0.5306143574694573,
+    "ece": 0.08224152454791546,
+    "accuracy": 0.6348747591522158,
+    "precision_macro": 0.3718014131843362,
+    "recall_macro": 0.3334304299832853,
+    "signals": 81,
+    "coverage": 0.03901734104046243,
+    "hit_rate": 0.16049382716049382,
+    "avg_net_bps_per_signal": -27.55112741318301,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.08420371126834136
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.09687539982031537
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.05228513514631725
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.04924378137513679
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0729947353104348,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.009644821516875816,
+    "gain_ci95": [
+     -0.019255556526228203,
+     0.0003969123275727947
+    ],
+    "p_better": 0.0295,
+    "brier": 0.6468746893921313,
+    "ece": 0.012715602523732073,
+    "accuracy": 0.4491075735648818,
+    "precision_macro": 0.24080349387715158,
+    "recall_macro": 0.33146155322321125,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.03547535311128422
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.031091985466080198
+     },
+     "ranging": {
+      "n": 925,
+      "gain": 0.001096509186423364
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.009859683352663422
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.010692010564683,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.024971819282966354,
+    "gain_ci95": [
+     -0.046732671798814504,
+     -0.004073909226232917
+    ],
+    "p_better": 0.012,
+    "brier": 0.5978403818752984,
+    "ece": 0.030102124830110464,
+    "accuracy": 0.5289017341040463,
+    "precision_macro": 0.3905717628810941,
+    "recall_macro": 0.3496985497384806,
+    "signals": 14,
+    "coverage": 0.00674373795761079,
+    "hit_rate": 0.35714285714285715,
+    "avg_net_bps_per_signal": -39.03533125597338,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": 0.016291926751604274
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.014743513121903142
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.03156037249548866
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.03658551020571031
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0654899956612875,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": 0.0004068805493601132,
+    "gain_ci95": [
+     -0.007903951003941331,
+     0.009022091667256626
+    ],
+    "p_better": 0.553,
+    "brier": 0.6427404914975736,
+    "ece": 0.013862374272739493,
+    "accuracy": 0.4602026049204052,
+    "precision_macro": 0.15354901014002897,
+    "recall_macro": 0.33263598326359833,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": -0.009891068401305674
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.016460554896574477
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.007492200541340634
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.0010436691686621423
+     }
+    }
+   }
+  },
+  "hist_gb": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9130352200580254,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.041038388978601896,
+    "gain_ci95": [
+     -0.06179410930463922,
+     -0.019949411577125837
+    ],
+    "p_better": 0.0,
+    "brier": 0.5308049580510074,
+    "ece": 0.08905333380242998,
+    "accuracy": 0.6464354527938343,
+    "precision_macro": 0.2735582521296807,
+    "recall_macro": 0.33315108936333065,
+    "signals": 21,
+    "coverage": 0.010115606936416185,
+    "hit_rate": 0.047619047619047616,
+    "avg_net_bps_per_signal": -31.42715266289113,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.11186358513959319
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.07796580912653257
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.035563432298206264
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.031552385843113914
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0964675971128934,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.033117683319334346,
+    "gain_ci95": [
+     -0.0501834603146704,
+     -0.0154653959272273
+    ],
+    "p_better": 0.0,
+    "brier": 0.6586595884544375,
+    "ece": 0.024495719266688438,
+    "accuracy": 0.43608297153883263,
+    "precision_macro": 0.3584694437838099,
+    "recall_macro": 0.3474486593677392,
+    "signals": 17,
+    "coverage": 0.008200675349734683,
+    "hit_rate": 0.4117647058823529,
+    "avg_net_bps_per_signal": 18.933182491541277,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.0876409530444976
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.0812689352249536
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.016674913296797916
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.026227072264492217
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0165272479418253,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.030807056660108415,
+    "gain_ci95": [
+     -0.049787450909092146,
+     -0.013743112773546822
+    ],
+    "p_better": 0.0,
+    "brier": 0.6033398036717443,
+    "ece": 0.044416684876196426,
+    "accuracy": 0.5380539499036608,
+    "precision_macro": 0.38174623912800026,
+    "recall_macro": 0.3429728483535012,
+    "signals": 9,
+    "coverage": 0.004335260115606936,
+    "hit_rate": 0.2222222222222222,
+    "avg_net_bps_per_signal": -48.73581091952811,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.017462249463203842
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": 0.0030212466236119776
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.025693560163395007
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.04679426311653321
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0718652439072167,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.005968367696569057,
+    "gain_ci95": [
+     -0.019638040682680758,
+     0.00770392610792633
+    ],
+    "p_better": 0.1975,
+    "brier": 0.6463778752149569,
+    "ece": 0.017255470480551666,
+    "accuracy": 0.4481427882296189,
+    "precision_macro": 0.3663838544564791,
+    "recall_macro": 0.344535282407549,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": -0.009157739222896031
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.023294485343523158
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.0007299121156494352
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.009944337215829742
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-without_trend": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9513046188313338,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.07930778775191015,
+    "gain_ci95": [
+     -0.11648463108860081,
+     -0.04364198093830197
+    ],
+    "p_better": 0.0,
+    "brier": 0.5340396685307064,
+    "ece": 0.13609008995434604,
+    "accuracy": 0.6628131021194605,
+    "precision_macro": 0.362985351284014,
+    "recall_macro": 0.3361214908397872,
+    "signals": 5,
+    "coverage": 0.0024084778420038534,
+    "hit_rate": 0.4,
+    "avg_net_bps_per_signal": -37.53819850797222,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.17452142316721017
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.06417260962800378
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.06877406324161603
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.06669168844655331
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0834682558141462,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.02011834202058726,
+    "gain_ci95": [
+     -0.03297581995817919,
+     -0.007293337269027809
+    ],
+    "p_better": 0.0005,
+    "brier": 0.6516431158538213,
+    "ece": 0.028804048130119816,
+    "accuracy": 0.44862518089725034,
+    "precision_macro": 0.35995920420660044,
+    "recall_macro": 0.3426968232682575,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.08504463253049918
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.030982923674771592
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.002529156848414425
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.016523305877025166
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0230112510801848,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.037291059798468,
+    "gain_ci95": [
+     -0.05879624835341906,
+     -0.017840322315620993
+    ],
+    "p_better": 0.0,
+    "brier": 0.6081093717572921,
+    "ece": 0.10989612268164983,
+    "accuracy": 0.5573217726396917,
+    "precision_macro": 0.2761827279013953,
+    "recall_macro": 0.3348258430279963,
+    "signals": 33,
+    "coverage": 0.015895953757225433,
+    "hit_rate": 0.2727272727272727,
+    "avg_net_bps_per_signal": -32.94673293274159,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.016023184816916922
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": 0.007604403248431688
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.04278658204608019
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.043873222211158726
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0659178698935368,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -2.099368288915638e-05,
+    "gain_ci95": [
+     -0.010394854432062717,
+     0.010325224101065192
+    ],
+    "p_better": 0.516,
+    "brier": 0.6421163174221884,
+    "ece": 0.01498100326943188,
+    "accuracy": 0.45972021225277376,
+    "precision_macro": 0.36195511262356184,
+    "recall_macro": 0.33353546826024166,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": -0.02004873699756782
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": 0.000345105744684739
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.007625234965694761
+     },
+     "trending": {
+      "n": 774,
+      "gain": -1.7191986428827315e-06
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-without_momentum": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9577221488505074,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.08572531777108398,
+    "gain_ci95": [
+     -0.11942320453704781,
+     -0.051241814243787466
+    ],
+    "p_better": 0.0,
+    "brier": 0.5495170114731883,
+    "ece": 0.14300374182097797,
+    "accuracy": 0.6584778420038536,
+    "precision_macro": 0.4304334587589844,
+    "recall_macro": 0.3614211344727187,
+    "signals": 41,
+    "coverage": 0.0197495183044316,
+    "hit_rate": 0.24390243902439024,
+    "avg_net_bps_per_signal": -29.385833630134275,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.16768343452194157
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.04412435571384327
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.0749928732615556
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.07875539239881477
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.1270824422469667,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.06373252845340778,
+    "gain_ci95": [
+     -0.08677607416611721,
+     -0.04142825480826112
+    ],
+    "p_better": 0.0,
+    "brier": 0.6739165515871095,
+    "ece": 0.05088488391941943,
+    "accuracy": 0.4100337674867342,
+    "precision_macro": 0.34027575099129215,
+    "recall_macro": 0.3432546395048501,
+    "signals": 28,
+    "coverage": 0.013506994693680656,
+    "hit_rate": 0.39285714285714285,
+    "avg_net_bps_per_signal": -23.387820378800097,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.176634002930865
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.09175742059729114
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.04217366760193367
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.045639820759215806
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0397396606893674,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.0540194694076505,
+    "gain_ci95": [
+     -0.079714463699622,
+     -0.030716407898602804
+    ],
+    "p_better": 0.0,
+    "brier": 0.6173300333136656,
+    "ece": 0.13198052091829407,
+    "accuracy": 0.5582851637764933,
+    "precision_macro": 0.45034982508745625,
+    "recall_macro": 0.33921554853963115,
+    "signals": 34,
+    "coverage": 0.016377649325626204,
+    "hit_rate": 0.29411764705882354,
+    "avg_net_bps_per_signal": -31.235251704453677,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.02383671037805205
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.01347735653197737
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.062468498230488334
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.06108773204997349
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.066082874867468,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.00018599865682046647,
+    "gain_ci95": [
+     -0.012805130724549203,
+     0.01259104414209122
+    ],
+    "p_better": 0.4975,
+    "brier": 0.6429315666008997,
+    "ece": 0.025566664445182394,
+    "accuracy": 0.45875542691751087,
+    "precision_macro": 0.4180828192626646,
+    "recall_macro": 0.34457313714873344,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.02382935552936899
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.0211663537675123
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.00475916389961438
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.009099898010363452
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-without_volatility": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0018813288972108,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.12988449781778744,
+    "gain_ci95": [
+     -0.17290591086722382,
+     -0.08674746630452901
+    ],
+    "p_better": 0.0,
+    "brier": 0.5566332011161857,
+    "ece": 0.14411983015837543,
+    "accuracy": 0.6392100192678227,
+    "precision_macro": 0.37432463789929854,
+    "recall_macro": 0.3461312909592071,
+    "signals": 7,
+    "coverage": 0.003371868978805395,
+    "hit_rate": 0.7142857142857143,
+    "avg_net_bps_per_signal": -27.01835775775768,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.2441698843294155
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.0030425192113248635
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.1094258157170275
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.11832824084430184
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.1432282055324505,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.07987829173889138,
+    "gain_ci95": [
+     -0.10638895155657459,
+     -0.05447734997069204
+    ],
+    "p_better": 0.0,
+    "brier": 0.6835932538814298,
+    "ece": 0.09089443474017966,
+    "accuracy": 0.37867824409068984,
+    "precision_macro": 0.35336732194209414,
+    "recall_macro": 0.35212979185279286,
+    "signals": 41,
+    "coverage": 0.019778099372889532,
+    "hit_rate": 0.24390243902439024,
+    "avg_net_bps_per_signal": -28.746875501820774,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.23854059006915235
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.10930820803632883
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.059107549056494936
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.043920241535999355
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.047511507723567,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.06179131644185018,
+    "gain_ci95": [
+     -0.08866635814929469,
+     -0.03758349529190717
+    ],
+    "p_better": 0.0,
+    "brier": 0.6196977548672148,
+    "ece": 0.12419055831993644,
+    "accuracy": 0.5611753371868978,
+    "precision_macro": 0.44301712779973657,
+    "recall_macro": 0.33709875281775853,
+    "signals": 33,
+    "coverage": 0.015895953757225433,
+    "hit_rate": 0.21212121212121213,
+    "avg_net_bps_per_signal": -34.41911400349985,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.04606921849728297
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.0022873812714277425
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.061034859835508534
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.07485935285309418
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0623130484589527,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": 0.0035838277516950217,
+    "gain_ci95": [
+     -0.008961756312992418,
+     0.016565337878944354
+    ],
+    "p_better": 0.725,
+    "brier": 0.640833740823649,
+    "ece": 0.016224239687798014,
+    "accuracy": 0.46068499758803666,
+    "precision_macro": 0.40018437010374946,
+    "recall_macro": 0.3491463610525738,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.026041214566204198
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.009839150241900588
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.0059234191920604735
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.003099662366461871
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-without_volume_flow": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0792503384760053,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.20725350739658188,
+    "gain_ci95": [
+     -0.26817841414552085,
+     -0.14590978264187476
+    ],
+    "p_better": 0.0,
+    "brier": 0.5871522892448451,
+    "ece": 0.18245293399717188,
+    "accuracy": 0.6411368015414258,
+    "precision_macro": 0.38336389371421226,
+    "recall_macro": 0.3513465309342951,
+    "signals": 139,
+    "coverage": 0.06695568400770713,
+    "hit_rate": 0.2014388489208633,
+    "avg_net_bps_per_signal": -32.473880366840255,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.40982809199435194
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.061727631512115265
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.14992973115490085
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.21266911396808505
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.1413730832328401,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.07802316943928116,
+    "gain_ci95": [
+     -0.1040315634090928,
+     -0.05236257103144996
+    ],
+    "p_better": 0.0,
+    "brier": 0.680039029887091,
+    "ece": 0.05781174018367468,
+    "accuracy": 0.3994211287988423,
+    "precision_macro": 0.35566880859991684,
+    "recall_macro": 0.3565171360017752,
+    "signals": 58,
+    "coverage": 0.027978774722624215,
+    "hit_rate": 0.3275862068965517,
+    "avg_net_bps_per_signal": -33.0108030817105,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.23516862631732147
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.1031760695739505
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.05300114905276277
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.04932347687508001
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.0608773971929297,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.07515720591121289,
+    "gain_ci95": [
+     -0.10343447320222823,
+     -0.04944990503231445
+    ],
+    "p_better": 0.0,
+    "brier": 0.6286570395943116,
+    "ece": 0.10307146416368915,
+    "accuracy": 0.5043352601156069,
+    "precision_macro": 0.333975318074258,
+    "recall_macro": 0.3381208759695884,
+    "signals": 27,
+    "coverage": 0.01300578034682081,
+    "hit_rate": 0.2962962962962963,
+    "avg_net_bps_per_signal": -20.13309885185851,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.024229130445036204
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.06969242647176427
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.07395298605590997
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.09362043617790852
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0642761560455316,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": 0.001620720165115929,
+    "gain_ci95": [
+     -0.00966094956617609,
+     0.012815741667850225
+    ],
+    "p_better": 0.618,
+    "brier": 0.6414297432419952,
+    "ece": 0.004541870656495424,
+    "accuracy": 0.46068499758803666,
+    "precision_macro": 0.45343105768774716,
+    "recall_macro": 0.34056207739306804,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.021781836616274333
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.01569030751271739
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.002876318957801867
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.0027307238184047446
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-without_regime": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9660315942814699,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.09403476320204636,
+    "gain_ci95": [
+     -0.1305363605581911,
+     -0.05720722324813319
+    ],
+    "p_better": 0.0,
+    "brier": 0.5472966472285483,
+    "ece": 0.14794401800640916,
+    "accuracy": 0.653179190751445,
+    "precision_macro": 0.3782307803421227,
+    "recall_macro": 0.34970160387043464,
+    "signals": 11,
+    "coverage": 0.0052986512524084775,
+    "hit_rate": 0.45454545454545453,
+    "avg_net_bps_per_signal": -17.191669123628387,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.19164702710730386
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.04066048549449099
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.08057761919321409
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.08399127690526094
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.1164987645955557,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.053148850801996585,
+    "gain_ci95": [
+     -0.07471221202730989,
+     -0.03182135318581845
+    ],
+    "p_better": 0.0,
+    "brier": 0.6697118751692944,
+    "ece": 0.05003248427141056,
+    "accuracy": 0.4129281234925229,
+    "precision_macro": 0.35493243888562537,
+    "recall_macro": 0.3539498468356492,
+    "signals": 63,
+    "coverage": 0.030390738060781478,
+    "hit_rate": 0.3492063492063492,
+    "avg_net_bps_per_signal": -36.73613016599315,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.09642267256282669
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.09503605925865799
+     },
+     "ranging": {
+      "n": 925,
+      "gain": -0.042677998240668695
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.043672408729494024
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 1.061083009468899,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.07536281818718223,
+    "gain_ci95": [
+     -0.105978749250798,
+     -0.046823146585036904
+    ],
+    "p_better": 0.0,
+    "brier": 0.6274440712741703,
+    "ece": 0.1540716648037602,
+    "accuracy": 0.5640655105973025,
+    "precision_macro": 0.5403812803131701,
+    "recall_macro": 0.3436783775165397,
+    "signals": 32,
+    "coverage": 0.015414258188824663,
+    "hit_rate": 0.25,
+    "avg_net_bps_per_signal": -30.86112905399193,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": -0.04242133443611655
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": -0.019900435430033947
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.0927133800524557
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.07915060022444809
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0691121117799136,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.003215235569266,
+    "gain_ci95": [
+     -0.018105409207273854,
+     0.011981134706670055
+    ],
+    "p_better": 0.3515,
+    "brier": 0.6443434308772873,
+    "ece": 0.036821177513305936,
+    "accuracy": 0.4602026049204052,
+    "precision_macro": 0.4025968626735213,
+    "recall_macro": 0.353238264046412,
+    "signals": 2,
+    "coverage": 0.000964785335262904,
+    "hit_rate": 1.0,
+    "avg_net_bps_per_signal": 109.3182326278819,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": 0.02929358999262033
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.03220508697974285
+     },
+     "ranging": {
+      "n": 884,
+      "gain": -0.0019419056889273365
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.010891967917014057
+     }
+    }
+   }
+  },
+  "logreg_strong_l2-base_tf_only": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.8924057539699387,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.02040892289051518,
+    "gain_ci95": [
+     -0.04350341805298946,
+     0.0011816815272396317
+    ],
+    "p_better": 0.032,
+    "brier": 0.5121416005130766,
+    "ece": 0.09314455751392178,
+    "accuracy": 0.6690751445086706,
+    "precision_macro": 0.44916018079131614,
+    "recall_macro": 0.34609787956470656,
+    "signals": 19,
+    "coverage": 0.009152215799614644,
+    "hit_rate": 0.10526315789473684,
+    "avg_net_bps_per_signal": -20.24340493025386,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.08150604454150463
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.09064497183663726
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.016302983947004586
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.011059063388620918
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0851228976532536,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.021772983859694624,
+    "gain_ci95": [
+     -0.03393231394303067,
+     -0.009237225421175506
+    ],
+    "p_better": 0.0,
+    "brier": 0.6508633314550418,
+    "ece": 0.026934303636399058,
+    "accuracy": 0.4664737095996141,
+    "precision_macro": 0.42044053427762945,
+    "recall_macro": 0.3375032038898334,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.11987242557762079
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.023862907184835577
+     },
+     "ranging": {
+      "n": 925,
+      "gain": 0.00012657015923508869
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.013390815545372607
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9879925010842597,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": -0.002272309802542834,
+    "gain_ci95": [
+     -0.013633836815173713,
+     0.008391279051559952
+    ],
+    "p_better": 0.3105,
+    "brier": 0.5869535641086462,
+    "ece": 0.032447240932022774,
+    "accuracy": 0.5631021194605009,
+    "precision_macro": 0.3987889661359049,
+    "recall_macro": 0.3341527573727263,
+    "signals": 2,
+    "coverage": 0.0009633911368015414,
+    "hit_rate": 0.0,
+    "avg_net_bps_per_signal": -50.63475266055715,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": 0.0009556681983316685
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": 0.01498497789698009
+     },
+     "ranging": {
+      "n": 845,
+      "gain": -0.0019274267905758883
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.004099115307204516
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0664339097321978,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.0005370335215503454,
+    "gain_ci95": [
+     -0.008595596754046786,
+     0.007228658248077859
+    ],
+    "p_better": 0.4495,
+    "brier": 0.6425054365933122,
+    "ece": 0.006155063865942847,
+    "accuracy": 0.4611673902556681,
+    "precision_macro": 0.320450885668277,
+    "recall_macro": 0.33357462879994076,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": -0.008208890187860474
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.0064057815836211195
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.004888436831106686
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.00120295703705379
+     }
+    }
+   }
+  },
+  "ensemble_current-base_tf_only": {
+   "BTC/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.8790333599703853,
+    "log_loss_naive": 0.8719968310794234,
+    "gain": -0.0070365288909618575,
+    "gain_ci95": [
+     -0.03023692371567045,
+     0.014410136338703939
+    ],
+    "p_better": 0.259,
+    "brier": 0.5037308504076065,
+    "ece": 0.09079387085679773,
+    "accuracy": 0.6584778420038536,
+    "precision_macro": 0.3459411424409217,
+    "recall_macro": 0.33688243451508537,
+    "signals": 9,
+    "coverage": 0.004335260115606936,
+    "hit_rate": 0.2222222222222222,
+    "avg_net_bps_per_signal": -24.634424614787868,
+    "by_regime": {
+     "high_volatility": {
+      "n": 374,
+      "gain": -0.021528097056683092
+     },
+     "low_liquidity": {
+      "n": 127,
+      "gain": 0.09182489123227151
+     },
+     "ranging": {
+      "n": 896,
+      "gain": -0.004887737583964775
+     },
+     "trending": {
+      "n": 674,
+      "gain": -0.021448462215273672
+     }
+    }
+   },
+   "BTC/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0738283991565905,
+    "log_loss_naive": 1.0633499137935591,
+    "gain": -0.010478485363031389,
+    "gain_ci95": [
+     -0.020166243537061236,
+     -0.0005551706393621896
+    ],
+    "p_better": 0.017,
+    "brier": 0.6463385747581007,
+    "ece": 0.030653034239260517,
+    "accuracy": 0.4655089242643512,
+    "precision_macro": 0.2572216330858961,
+    "recall_macro": 0.3349039753184831,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 263,
+      "gain": -0.05537110680732321
+     },
+     "low_liquidity": {
+      "n": 125,
+      "gain": -0.01985102747454436
+     },
+     "ranging": {
+      "n": 925,
+      "gain": 0.003914538873966492
+     },
+     "trending": {
+      "n": 758,
+      "gain": -0.010747116019002743
+     }
+    }
+   },
+   "ETH/USDT 15m": {
+    "n": 2076,
+    "log_loss": 0.9840562938197516,
+    "log_loss_naive": 0.9857201912817167,
+    "gain": 0.0016638974619653428,
+    "gain_ci95": [
+     -0.011967789260896188,
+     0.01503387807219841
+    ],
+    "p_better": 0.58,
+    "brier": 0.5827489036471137,
+    "ece": 0.02988195640180577,
+    "accuracy": 0.569364161849711,
+    "precision_macro": 0.5596870706370302,
+    "recall_macro": 0.3436375273146857,
+    "signals": 8,
+    "coverage": 0.0038535645472061657,
+    "hit_rate": 0.25,
+    "avg_net_bps_per_signal": -82.4458306026171,
+    "by_regime": {
+     "high_volatility": {
+      "n": 334,
+      "gain": 0.016664639678622965
+     },
+     "low_liquidity": {
+      "n": 129,
+      "gain": 0.020700948400377547
+     },
+     "ranging": {
+      "n": 845,
+      "gain": 0.0017857956461051622
+     },
+     "trending": {
+      "n": 765,
+      "gain": -0.006745294106775285
+     }
+    }
+   },
+   "ETH/USDT 1h": {
+    "n": 2073,
+    "log_loss": 1.0666107687374522,
+    "log_loss_naive": 1.0658968762106475,
+    "gain": -0.0007138925268045134,
+    "gain_ci95": [
+     -0.008853567019814726,
+     0.007276244293616879
+    ],
+    "p_better": 0.445,
+    "brier": 0.6431243633042515,
+    "ece": 0.008908005835819622,
+    "accuracy": 0.46068499758803666,
+    "precision_macro": 0.2647342995169082,
+    "recall_macro": 0.33322595376507325,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 264,
+      "gain": -0.009010863422328293
+     },
+     "low_liquidity": {
+      "n": 148,
+      "gain": -0.01072923334296923
+     },
+     "ranging": {
+      "n": 884,
+      "gain": 0.005814401214042507
+     },
+     "trending": {
+      "n": 774,
+      "gain": -0.0034776743616580993
+     }
+    }
+   }
+  }
+ },
+ "development_mean_gain": {
+  "ensemble_current": -0.03704521506976705,
+  "logreg": -0.10381117253535008,
+  "logreg_strong_l2": -0.05415783499732135,
+  "random_forest": -0.02033316849450384,
+  "hist_gb": -0.02773287416365343,
+  "logreg_strong_l2-without_trend": -0.03418454581346364,
+  "logreg_strong_l2-without_momentum": -0.05091582857224069,
+  "logreg_strong_l2-without_volatility": -0.0669925695617085,
+  "logreg_strong_l2-without_volume_flow": -0.08970329064549,
+  "logreg_strong_l2-without_regime": -0.05644041694012279,
+  "logreg_strong_l2-base_tf_only": -0.011247812518575744,
+  "ensemble_current-base_tf_only": -0.004141252329708104
+ },
+ "chosen_on_development": "ensemble_current-base_tf_only",
+ "final_holdout": {
+  "ensemble_current": {
+   "BTC/USDT 15m": {
+    "n": 1479,
+    "log_loss": 0.8454914167809664,
+    "log_loss_naive": 0.8544439776877139,
+    "gain": 0.008952560906747158,
+    "gain_ci95": [
+     -0.002044055150173979,
+     0.020940349522492588
+    ],
+    "p_better": 0.9465,
+    "brier": 0.48021765567252084,
+    "ece": 0.0326123966622485,
+    "accuracy": 0.6808654496281271,
+    "precision_macro": 0.22695514987604237,
+    "recall_macro": 0.3333333333333333,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 235,
+      "gain": -0.046381756599386
+     },
+     "low_liquidity": {
+      "n": 101,
+      "gain": 0.030878424053705413
+     },
+     "ranging": {
+      "n": 648,
+      "gain": 0.026049763563489182
+     },
+     "trending": {
+      "n": 494,
+      "gain": 0.008543759324852076
+     }
+    },
+    "period": [
+     1790210700000,
+     1791540900000
+    ]
+   },
+   "BTC/USDT 1h": {
+    "n": 1478,
+    "log_loss": 1.0453565813860053,
+    "log_loss_naive": 1.0476899968436066,
+    "gain": 0.0023334154576013944,
+    "gain_ci95": [
+     -0.008680660176723668,
+     0.01265673513061092
+    ],
+    "p_better": 0.6495,
+    "brier": 0.6277497674299353,
+    "ece": 0.030133608278486396,
+    "accuracy": 0.49052774018944517,
+    "precision_macro": 0.16350924672981507,
+    "recall_macro": 0.3333333333333333,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 146,
+      "gain": -0.039415081510940156
+     },
+     "low_liquidity": {
+      "n": 77,
+      "gain": 0.045894473893856744
+     },
+     "ranging": {
+      "n": 722,
+      "gain": 0.005574461185540622
+     },
+     "trending": {
+      "n": 531,
+      "gain": 0.0030664493562897344
+     }
+    },
+    "period": [
+     1786208400000,
+     1791525600000
+    ]
+   },
+   "ETH/USDT 15m": {
+    "n": 1479,
+    "log_loss": 0.9543274931545147,
+    "log_loss_naive": 0.938210387897599,
+    "gain": -0.016117105256915582,
+    "gain_ci95": [
+     -0.03158100133635337,
+     0.000493007083787193
+    ],
+    "p_better": 0.0325,
+    "brier": 0.5616932222803814,
+    "ece": 0.09347501122924175,
+    "accuracy": 0.597025016903313,
+    "precision_macro": 0.2625176496144238,
+    "recall_macro": 0.33306548814785053,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 253,
+      "gain": -0.03738549252380883
+     },
+     "low_liquidity": {
+      "n": 96,
+      "gain": -0.013787685984104597
+     },
+     "ranging": {
+      "n": 748,
+      "gain": 0.005587788524621679
+     },
+     "trending": {
+      "n": 378,
+      "gain": -0.042680530458942524
+     }
+    },
+    "period": [
+     1790210700000,
+     1791540900000
+    ]
+   },
+   "ETH/USDT 1h": {
+    "n": 1478,
+    "log_loss": 1.0986206690798388,
+    "log_loss_naive": 1.0518254288758089,
+    "gain": -0.04679524020403001,
+    "gain_ci95": [
+     -0.07562139348832367,
+     -0.01873373850896992
+    ],
+    "p_better": 0.0005,
+    "brier": 0.6531843660749024,
+    "ece": 0.04164903979515171,
+    "accuracy": 0.46075778078484436,
+    "precision_macro": 0.406586882388381,
+    "recall_macro": 0.35801669976518036,
+    "signals": 35,
+    "coverage": 0.02368064952638701,
+    "hit_rate": 0.17142857142857143,
+    "avg_net_bps_per_signal": -14.720097123544633,
+    "by_regime": {
+     "high_volatility": {
+      "n": 121,
+      "gain": -0.14630621669901342
+     },
+     "low_liquidity": {
+      "n": 82,
+      "gain": 0.10426623979838322
+     },
+     "ranging": {
+      "n": 785,
+      "gain": -0.024087274850968336
+     },
+     "trending": {
+      "n": 485,
+      "gain": -0.08255705728553432
+     }
+    },
+    "period": [
+     1786208400000,
+     1791525600000
+    ]
+   }
+  },
+  "ensemble_current-base_tf_only": {
+   "BTC/USDT 15m": {
+    "n": 1479,
+    "log_loss": 0.8329013638901853,
+    "log_loss_naive": 0.8544439776877139,
+    "gain": 0.021542613797528327,
+    "gain_ci95": [
+     0.011590726019818679,
+     0.03295029003768207
+    ],
+    "p_better": 1.0,
+    "brier": 0.4720802689663826,
+    "ece": 0.058533094607003816,
+    "accuracy": 0.6808654496281271,
+    "precision_macro": 0.22695514987604237,
+    "recall_macro": 0.3333333333333333,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 235,
+      "gain": -0.03060884370338708
+     },
+     "low_liquidity": {
+      "n": 101,
+      "gain": 0.046538856450155666
+     },
+     "ranging": {
+      "n": 648,
+      "gain": 0.03439328226333645
+     },
+     "trending": {
+      "n": 494,
+      "gain": 0.02456869723104322
+     }
+    },
+    "period": [
+     1790210700000,
+     1791540900000
+    ]
+   },
+   "BTC/USDT 1h": {
+    "n": 1478,
+    "log_loss": 1.0437412385974807,
+    "log_loss_naive": 1.0476899968436066,
+    "gain": 0.003948758246125955,
+    "gain_ci95": [
+     -0.005451478953713502,
+     0.012624633918658569
+    ],
+    "p_better": 0.792,
+    "brier": 0.627201093351281,
+    "ece": 0.03591219842017782,
+    "accuracy": 0.49052774018944517,
+    "precision_macro": 0.16350924672981507,
+    "recall_macro": 0.3333333333333333,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 146,
+      "gain": -0.03955426606629636
+     },
+     "low_liquidity": {
+      "n": 77,
+      "gain": 0.04529121914945353
+     },
+     "ranging": {
+      "n": 722,
+      "gain": 0.008304935876519854
+     },
+     "trending": {
+      "n": 531,
+      "gain": 0.003955191755551651
+     }
+    },
+    "period": [
+     1786208400000,
+     1791525600000
+    ]
+   },
+   "ETH/USDT 15m": {
+    "n": 1479,
+    "log_loss": 0.9094291590063845,
+    "log_loss_naive": 0.938210387897599,
+    "gain": 0.02878122889121432,
+    "gain_ci95": [
+     0.015047987393440177,
+     0.04208020166038909
+    ],
+    "p_better": 1.0,
+    "brier": 0.5283485652606194,
+    "ece": 0.057764433222145695,
+    "accuracy": 0.6200135226504395,
+    "precision_macro": 0.2738127544097693,
+    "recall_macro": 0.3341394197963101,
+    "signals": 0,
+    "coverage": 0.0,
+    "hit_rate": null,
+    "avg_net_bps_per_signal": null,
+    "by_regime": {
+     "high_volatility": {
+      "n": 253,
+      "gain": -0.0062348514128450355
+     },
+     "low_liquidity": {
+      "n": 96,
+      "gain": 0.04757668586814794
+     },
+     "ranging": {
+      "n": 748,
+      "gain": 0.050777299307885375
+     },
+     "trending": {
+      "n": 378,
+      "gain": 0.005862185132682326
+     }
+    },
+    "period": [
+     1790210700000,
+     1791540900000
+    ]
+   },
+   "ETH/USDT 1h": {
+    "n": 1478,
+    "log_loss": 1.0673074920532215,
+    "log_loss_naive": 1.0518254288758089,
+    "gain": -0.015482063177412658,
+    "gain_ci95": [
+     -0.03813266740931304,
+     0.007396603216488162
+    ],
+    "p_better": 0.0935,
+    "brier": 0.6396331155678682,
+    "ece": 0.06490250414328166,
+    "accuracy": 0.4709066305818674,
+    "precision_macro": 0.2753023389649361,
+    "recall_macro": 0.34294322372863745,
+    "signals": 5,
+    "coverage": 0.0033829499323410014,
+    "hit_rate": 0.6,
+    "avg_net_bps_per_signal": 39.81948692724093,
+    "by_regime": {
+     "high_volatility": {
+      "n": 121,
+      "gain": -0.09756548200951078
+     },
+     "low_liquidity": {
+      "n": 82,
+      "gain": 0.1565096395212349
+     },
+     "ranging": {
+      "n": 785,
+      "gain": -0.0028928495664277934
+     },
+     "trending": {
+      "n": 485,
+      "gain": -0.044619799948546986
+     }
+    },
+    "period": [
+     1786208400000,
+     1791525600000
+    ]
+   }
+  }
+ }
+}

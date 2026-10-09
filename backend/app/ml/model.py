@@ -22,7 +22,15 @@ from sklearn.preprocessing import StandardScaler
 N_CLASSES = 3
 # Training/calibration procedure. A change here is evaluated head-to-head against production
 # before it can replace it (see learning.engine.procedure_upgrade).
-PROCEDURE_VERSION = "ens2-natural-weights-temp-bias"
+PROCEDURE_VERSION = "ens3-base-tf-features"
+
+
+def procedure_features(features: list[str], base_tf: str) -> list[str]:
+    """Inputs used by the current procedure. Research on real data (docs/RESEARCH_2026-10-09.md): the 4h/1d
+    context features made out-of-sample log loss worse (few independent values in the available history),
+    so the model uses the base timeframe and the regime flags only. Higher timeframes still define regimes."""
+    keep = [f for f in features if f.startswith(base_tf + "_") or f.startswith("regime_")]
+    return keep or list(features)
 EPS = 1e-6
 
 
@@ -135,6 +143,30 @@ class EnsembleModel:
     def component_proba(self, X) -> dict[str, np.ndarray]:
         X = np.asarray(X, dtype=float)
         return {k: _full_proba(m, X) for k, m in self.models.items()}
+
+    def factors(self, x, cls: int, top: int = 5) -> list[dict]:
+        """Which inputs moved P(cls) most: each feature in turn is replaced by its training median
+        (the imputer statistic) and the change of P(cls) is measured. Local, model-agnostic, approximate."""
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        try:
+            med = np.asarray(self.models["logreg"].named_steps["impute"].statistics_, dtype=float)
+        except (KeyError, AttributeError):
+            return []
+        if len(med) != x.shape[1]:
+            return []
+        base = float(self.predict_proba(x)[0, cls])
+        idx = [i for i in range(x.shape[1]) if np.isfinite(x[0, i]) and abs(x[0, i] - med[i]) > 1e-12]
+        if not idx:
+            return []
+        Xp = np.repeat(x, len(idx), axis=0)
+        for r, i in enumerate(idx):
+            Xp[r, i] = med[i]
+        p = self.predict_proba(Xp)[:, cls]
+        out = [{"feature": self.feature_names[i] if i < len(self.feature_names) else str(i),
+                "value": float(x[0, i]), "median": float(med[i]), "effect": float(base - p[r])}
+               for r, i in enumerate(idx)]
+        out.sort(key=lambda d: -abs(d["effect"]))
+        return out[:top]
 
     def describe(self) -> dict:
         return {"components": list(self.models), "weights": self.weights,

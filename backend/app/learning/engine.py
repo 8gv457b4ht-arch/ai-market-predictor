@@ -24,9 +24,9 @@ import pandas as pd
 from ..config import TIMEFRAME_MS, Settings
 from ..db import Database, now_ms
 from ..ml.dataset import build_training_frame
-from ..ml.evaluation import backtest, full_metrics, walk_forward
+from ..ml.evaluation import backtest, baseline_test, full_metrics, walk_forward
 from ..ml.features import FEATURE_VERSION
-from ..ml.model import PROCEDURE_VERSION, EnsembleModel
+from ..ml.model import procedure_features, PROCEDURE_VERSION, EnsembleModel
 from . import registry
 
 log = logging.getLogger("learning")
@@ -50,7 +50,8 @@ def block_bootstrap_prob(diff: np.ndarray, block: int, n_boot: int = 2000, seed:
     return float((means > 0).mean())
 
 
-def compare_models(y: np.ndarray, p_prod: np.ndarray, p_chal: np.ndarray, settings: Settings, horizon: int) -> dict:
+def compare_models(y: np.ndarray, p_prod: np.ndarray, p_chal: np.ndarray, settings: Settings, horizon: int,
+                   regimes: np.ndarray | None = None) -> dict:
     ll_p, ll_c = _per_sample_logloss(y, p_prod), _per_sample_logloss(y, p_chal)
     onehot = np.eye(3)[y]
     brier_p = float(np.mean(np.sum((p_prod - onehot) ** 2, axis=1)))
@@ -65,9 +66,23 @@ def compare_models(y: np.ndarray, p_prod: np.ndarray, p_chal: np.ndarray, settin
         "brier_ok": brier_c <= brier_p + 1e-4,
         "accuracy_ok": acc_c >= acc_p - 0.01,
     }
+    # stability: the gain must hold in the earlier AND the later half of the holdout (not one lucky stretch)
+    half = len(y) // 2
+    halves = [float(np.mean((ll_p - ll_c)[:half])) if half else 0.0, float(np.mean((ll_p - ll_c)[half:])) if half else 0.0]
+    checks["both_halves_ok"] = all(g > 0 for g in halves)
+    by_regime = {}
+    if regimes is not None:
+        for r in sorted(set(map(str, regimes))):
+            m = np.asarray(regimes).astype(str) == r
+            if m.sum() >= 1:
+                by_regime[r] = {"n": int(m.sum()), "logloss_production": float(ll_p[m].mean()),
+                                "logloss_challenger": float(ll_c[m].mean()), "gain": float((ll_p[m] - ll_c[m]).mean())}
+        # no regime with enough rows may get clearly worse
+        checks["no_regime_worse"] = all(v["gain"] > -0.05 for v in by_regime.values() if v["n"] >= 50)
     return {"n_holdout": int(len(y)), "logloss_production": float(ll_p.mean()), "logloss_challenger": float(ll_c.mean()),
             "logloss_gain": gain, "bootstrap_p_better": prob, "brier_production": brier_p,
             "brier_challenger": brier_c, "accuracy_production": acc_p, "accuracy_challenger": acc_c,
+            "halves_gain": halves, "by_regime": by_regime,
             "checks": checks, "promote": all(checks.values())}
 
 
@@ -137,7 +152,7 @@ def procedure_upgrade(db: Database, settings: Settings, symbol: str, tf: str, la
     y = both["label"].astype(int).to_numpy()
     p_new = both[["p_down", "p_flat", "p_up"]].to_numpy()
     p_old = both[["p_down_prod", "p_flat_prod", "p_up_prod"]].to_numpy()
-    cmp_ = compare_models(y, p_old, p_new, settings, settings.horizon_bars)
+    cmp_ = compare_models(y, p_old, p_new, settings, settings.horizon_bars, both["regime"].to_numpy())
     cmp_["kind"] = "procedure_upgrade"
     if cmp_["promote"]:
         out = bootstrap_model(db, settings, symbol, tf, labelled, features,
@@ -163,6 +178,7 @@ def procedure_upgrade(db: Database, settings: Settings, symbol: str, tf: str, la
 def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, force: bool = False) -> dict:
     key = registry.model_key(symbol, tf, settings.horizon_bars)
     frame, features = build_training_frame(db, settings, symbol, tf)
+    features = procedure_features(features, tf)
     labelled = frame.dropna(subset=["label"]).reset_index(drop=True) if not frame.empty else frame
     if labelled.empty or len(labelled) < settings.min_train_rows + 250:
         db.log_event("waiting", {"reason": "not_enough_history", "labelled_rows": int(len(labelled))}, key)
@@ -194,6 +210,16 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
 
     n_hold = max(settings.min_holdout, int(len(new) * settings.holdout_fraction))
     holdout = new.iloc[-n_hold:]
+    if last_attempt:
+        # each decision uses rows no earlier decision has seen: repeated testing on the same
+        # holdout would eventually promote a lucky challenger
+        unseen = new[new.open_ts > last_attempt]
+        if len(unseen) < settings.min_holdout:
+            out = {"status": "waiting", "reason": "holdout_not_fresh", "unseen_labels": int(len(unseen)),
+                   "required": settings.min_holdout}
+            db.set_state(f"learning_status:{key}", {**out, "ts_ms": now_ms()})
+            return out
+        holdout = unseen
     hold_start = int(holdout.open_ts.iloc[0])
     train = labelled[labelled.open_ts < hold_start - h * bar]  # purge gap before the holdout
     y = holdout["label"].astype(int).to_numpy()
@@ -208,7 +234,7 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
     p_prod = prod_art["model"].predict_proba(holdout[prod_feats].to_numpy(float))
     challenger = _fit(train, features)
     p_chal = challenger.predict_proba(holdout[features].to_numpy(float))
-    cmp_ = compare_models(y, p_prod, p_chal, settings, h)
+    cmp_ = compare_models(y, p_prod, p_chal, settings, h, holdout["regime"].to_numpy())
     chal_metrics = full_metrics(y, p_chal, holdout["regime"].to_numpy(), settings.confidence_threshold, settings.min_edge)
     prod_metrics = full_metrics(y, p_prod, holdout["regime"].to_numpy(), settings.confidence_threshold, settings.min_edge)
     oos = holdout[["open_ts", "open", "close", "fwd_return", "label", "label_threshold", "regime"]].copy()
@@ -216,6 +242,9 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
     chal_metrics["backtest"] = backtest(oos, tf, h, settings.confidence_threshold, settings.min_edge,
                                         settings.fee_bps, settings.slippage_bps, settings.spread_bps, settings.latency_ms)
     chal_metrics["method"] = "chronological holdout unseen by production and challenger"
+    prior = np.clip(np.bincount(train["label"].astype(int).to_numpy(), minlength=3) / len(train), 1e-6, 1)
+    oos[["p_naive_down", "p_naive_flat", "p_naive_up"]] = prior / prior.sum()
+    chal_metrics["baseline_test"] = baseline_test(oos, h, settings.baseline_p_better)
     cmp_["production_metrics"] = {k: prod_metrics[k] for k in ("accuracy", "log_loss", "brier", "ece", "signals", "by_regime")}
 
     version = registry.new_version(key)
@@ -246,8 +275,9 @@ def challenger_cycle(db: Database, settings: Settings, symbol: str, tf: str, for
 
 
 def _short(c: dict) -> dict:
-    return {k: c[k] for k in ("n_holdout", "logloss_production", "logloss_challenger", "logloss_gain",
-                              "bootstrap_p_better", "accuracy_production", "accuracy_challenger", "checks")}
+    return {k: c.get(k) for k in ("n_holdout", "logloss_production", "logloss_challenger", "logloss_gain",
+                                  "bootstrap_p_better", "accuracy_production", "accuracy_challenger", "checks",
+                                  "halves_gain", "by_regime")}
 
 
 def ledger_review(db: Database, key_symbol: str, tf: str, horizon: int) -> dict:

@@ -24,6 +24,8 @@ def make_env(tmp: Path, **overrides) -> dict:
         "NEWS_FEEDS": "https://example.invalid/feed.xml",
         "ANTHROPIC_API_KEY": "",
         "OPENAI_API_KEY": "",
+        "CONTROL_DIR": str(tmp / "control"),  # never the repository's real control files
+        "WAIT_CLOSE_MAX_SEC": "0",
     }
     env.update({k: str(v) for k, v in overrides.items()})
     return env

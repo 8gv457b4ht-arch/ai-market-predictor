@@ -87,7 +87,8 @@ def test_full_cycle_with_one_blocked_exchange(monkeypatch, tmp_path):
     s, db = fresh_settings(monkeypatch, tmp_path, PRIMARY_EXCHANGE="auto", SYMBOLS="BTC/USDT", PREDICT_TIMEFRAMES="15m",
                            TIMEFRAMES="15m,1h,4h,1d", HISTORY_BARS=2400, CONTEXT_HISTORY_BARS=800, WS_SAMPLE_SEC=3,
                            WALK_FORWARD_FOLDS=3, MIN_TRAIN_ROWS=600, PUBLIC_DIR=tmp_path / "public",
-                           NTFY_TOPIC="test-topic", NOTIFY_EVENTS="signals,all_predictions,outages,promotions")
+                           NTFY_TOPIC="test-topic", NOTIFY_EVENTS="signals,all_predictions,outages,promotions",
+                           NOTIFY_MAX_AGE_SEC=3600)  # the synthetic last close can be up to 15 min old
     monkeypatch.setattr(rest, "fetch_klines", fake_klines)
     monkeypatch.setattr(rest, "fetch_history", fake_history)
     monkeypatch.setattr(rest, "fetch_ticker", fake_ticker)
@@ -127,12 +128,15 @@ def test_full_cycle_with_one_blocked_exchange(monkeypatch, tmp_path):
     assert (tmp_path / "public" / "candles_BTC-USDT_15m.json").exists()
     assert "API_KEY" not in json.dumps(st) and "test-topic" not in json.dumps(st)  # no secrets in public files
 
-    titles = [h["Title"] for _, _, h in sent]
-    assert any("Model update" in t for t in titles) and any("BTC/USDT 15m" in t for t in titles)
-    assert all(u.startswith("https://ntfy.sh/test-topic") for u, _, _ in sent)
+    msgs = [json.loads(d) for _, d, _ in sent]
+    titles = [m["title"] for m in msgs]
+    assert any("Обновление модели" in t for t in titles) and any("BTC/USDT 15m" in t for t in titles)  # Russian by default
+    assert all(u == "https://ntfy.sh" for u, _, _ in sent) and all(m["topic"] == "test-topic" for m in msgs)
+    body = next(m["message"] for m in msgs if "BTC/USDT 15m" in m["title"])
+    assert "Рост" in body and "Качество данных" in body and "не торговая рекомендация" in body
     n_before = len(sent)
     run_cycle(db, s, connect=fake_connect, news=False, learn=False)
-    assert not any("BTC/USDT 15m" in h["Title"] for _, _, h in sent[n_before:])  # each prediction notified once
+    assert not any("BTC/USDT 15m" in json.loads(d)["title"] for _, d, _ in sent[n_before:])  # each prediction notified once
 
 
 def test_schema_migration_adds_columns(tmp_path):
@@ -148,3 +152,30 @@ def test_schema_migration_adds_columns(tmp_path):
     db = Database(f"sqlite:///{path}")
     db.init_schema()
     assert "gate_json" in db.columns("predictions")
+
+
+def test_cycle_waits_for_candle_close_and_records_health(monkeypatch, tmp_path):
+    """Scheduled mode with WAIT_CLOSE_MAX_SEC: streams stay open until the (simulated) close, then the newest
+    bars are fetched and predictions made; source checks, health and gaps are exported (SYNTHETIC)."""
+    s, db = fresh_settings(monkeypatch, tmp_path, PRIMARY_EXCHANGE="auto", SYMBOLS="BTC/USDT", PREDICT_TIMEFRAMES="15m",
+                           TIMEFRAMES="15m,1h,4h,1d", HISTORY_BARS=2400, CONTEXT_HISTORY_BARS=800, WS_SAMPLE_SEC=2,
+                           WALK_FORWARD_FOLDS=3, MIN_TRAIN_ROWS=600, PUBLIC_DIR=tmp_path / "public")
+    monkeypatch.setattr(rest, "fetch_klines", fake_klines)
+    monkeypatch.setattr(rest, "fetch_history", fake_history)
+    monkeypatch.setattr(rest, "fetch_ticker", fake_ticker)
+    from backend.app.cloud import cycle
+    cycle.run_cycle(db, s, connect=fake_connect, news=False)  # trains
+    db.execute("DELETE FROM predictions")
+    monkeypatch.setattr(cycle, "next_close_wait", lambda settings, now=None: (3.0, 1))
+    r = cycle.run_cycle(db, s, connect=fake_connect, news=False, learn=False)
+    assert not r["errors"], r["errors"]
+    assert r["wait_for_close"]["wait_sec"] == 3.0 and r["timings_sec"]["ws_close"] >= 2.5
+    assert r["predictions_at_close"]["BTC/USDT|15m"]["status"] in ("predicted", "already_predicted")
+    assert db.scalar("SELECT COUNT(*) FROM source_checks WHERE channel='ws'") == 9  # 3 exchanges x 3 stream samples
+    st = json.loads((tmp_path / "public" / "state.json").read_text())
+    assert st["export_version"] == 2 and st["health"]["database"]["ok"] and st["health"]["last_prediction_ms"]
+    assert st["source_stats"]["binance"]["rest"]["24h"]["error_rate"] == 1.0
+    assert st["source_stats"]["okx"]["ws"]["24h"]["error_rate"] == 0.0
+    m = st["models"]["BTC/USDT|15m|h4"]
+    assert m["baseline_test"] and "passed" in m["baseline_test"] and "gaps" in m
+    assert st["health"]["notifications"]["channels"] == {"ntfy": False, "telegram": False}

@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "events": ["signals", "outages", "promotions"],
+  "min_confidence": 0.6,
+  "min_quality": 0.8,
+  "timeframes": ["15m", "1h"],
+  "symbols": ["BTC/USDT", "ETH/USDT"],
+  "max_age_sec": 600,
+  "language": "ru"
+}

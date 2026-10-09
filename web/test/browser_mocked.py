@@ -127,15 +127,15 @@ async def main():
         status = await page.text_content("#statusGrid")
         print("price:", price, "| signal:", await page.text_content("#signal"))
         print("status:", " | ".join(x.strip()[:60] for x in status.split("●")))
-        assert price.startswith("$62,"), price
-        assert "LIVE" in status and "READY" in status
+        assert price.replace("\u202f", "").replace("\xa0", "").replace(" ", "").startswith("$62"), price  # ru-RU: "$62 000,00"
+        assert "LIVE" in status and "OK" in status
         for ex in ("binance", "bybit", "okx"):
             assert ex in await page.text_content("#exTable")
-        assert "live" in await page.text_content("#exTable")
+        assert "LIVE" in await page.text_content("#exTable")
         state = await page.evaluate("() => { const S = window.AMPApp.state; const r=[...S.ledger.values()][0]; return {n:S.ledger.size, keys:Object.keys(r), feats:Object.keys(r.features).length, reg:S.registry.versions.map(v=>[v.key,v.status,v.metrics.log_loss,v.metrics.baseline_prior.log_loss]), news:S.news.length} }")
         print("ledger records:", state["n"], "| features per record:", state["feats"], "| news events:", state["news"])
         print("registry:", state["reg"])
-        for k in ("prediction", "candle_ts", "symbol", "tf", "price", "p_up", "p_down", "confidence", "model_version", "features", "regime", "quality", "snapshot"):
+        for k in ("prediction", "candle_ts", "symbol", "timeframe", "price", "p_up", "p_down", "confidence", "model_version", "features", "regime", "quality_score", "gate"):
             assert k in state["keys"], k
         assert state["news"] >= 2 and "TestWire" in await page.text_content("#newsList")
         for tab in ("volume", "cvd", "book", "ind", "price"):
@@ -147,8 +147,8 @@ async def main():
         await page.wait_for_timeout(8000)
         mk = await page.text_content("#modelKv")
         print("model panel:", mk[:300].replace("\n", " "))
-        assert "Last validation" in mk
-        await page.click("text=Backtest with costs")
+        assert "Последняя проверка претендента" in mk
+        await page.click("text=Бэктест с издержками")
         await page.click("#btForm button")
         await page.wait_for_timeout(500)
         print("backtest:", (await page.text_content("#btResult"))[:120])

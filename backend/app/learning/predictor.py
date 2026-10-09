@@ -22,6 +22,8 @@ log = logging.getLogger("predictor")
 
 # half-lives (seconds) used to down-weight stale live inputs
 FRESHNESS_HALF_LIFE = {"order_book": 10.0, "order_flow": 60.0, "ticker": 120.0}
+# data-quality issues that mean "the data is not current" (NO TRADE code STALE DATA)
+STALE_CODES = {"stale_candles", "no_candles", "future_candle"}
 
 
 def freshness(age_sec: float | None, half_life: float) -> float:
@@ -106,6 +108,51 @@ class Predictor:
             return "low_liquidity"
         return base_regime
 
+    # ------------------------------------------------------------ helpers
+    def baseline(self, prod: dict) -> dict | None:
+        """Out-of-sample test 'model vs naive base rates' for this production version (None = not tested)."""
+        bt = (prod.get("metrics") or {}).get("baseline_test") or self.db.get_state(f"baseline_test:{prod['version']}")
+        if not bt:
+            return None
+        return {**bt, "passed": bool(bt.get("gain", 0) > 0 and bt.get("p_better", 0) >= self.s.baseline_p_better),
+                "p_required": self.s.baseline_p_better}
+
+    def costs(self, snap: dict, prod: dict) -> dict:
+        """Expected round-trip costs (configured fee + slippage + spread, or the live spread if wider) and what the
+        model's own out-of-sample signals earned after costs. A direction probability is not a profit estimate."""
+        live_spread = snap.get("spread_bps") if snap["freshness"]["weights"]["order_book"] >= 0.5 else None
+        spread = max(self.s.spread_bps, live_spread or 0.0)
+        rt = 2 * self.s.fee_bps + 2 * self.s.slippage_bps + spread
+        b = (prod.get("metrics") or {}).get("backtest") or {}
+        return {"fee_bps_per_side": self.s.fee_bps, "slippage_bps_per_side": self.s.slippage_bps,
+                "spread_bps": spread, "live_spread_bps": live_spread, "round_trip_bps": rt,
+                "latency_ms": self.s.latency_ms,
+                "oos_signals": b.get("trades"), "oos_avg_net_bps": b.get("avg_net_bps"),
+                "oos_win_rate": b.get("win_rate")}
+
+    def factors(self, art: dict, x, model_dir: str) -> list[dict]:
+        cls = {"DOWN": 0, "FLAT": 1, "UP": 2}.get(model_dir, 1)
+        try:
+            return art["model"].factors(x, cls, 5) if hasattr(art["model"], "factors") else []
+        except Exception:  # noqa: BLE001 - explanations must never block a prediction
+            log.exception("factor attribution failed")
+            return []
+
+    def record_gaps(self, symbol: str, tf: str, candle_ts: int, now: int) -> int:
+        """Candle closes between the previous prediction and this one that got no prediction."""
+        bar = TIMEFRAME_MS[tf]
+        prev = self.db.scalar("SELECT MAX(candle_ts) FROM predictions WHERE symbol=? AND exchange=? AND timeframe=? "
+                              "AND horizon_bars=? AND candle_ts < ?",
+                              (symbol, self.s.primary_exchange, tf, self.s.horizon_bars, candle_ts))
+        if prev is None:
+            return 0
+        missed = list(range(int(prev) + bar, candle_ts, bar))[-200:]
+        for ts in missed:
+            self.db.execute("INSERT INTO prediction_gaps(symbol,exchange,timeframe,candle_ts,detected_ms,reason) "
+                            "VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+                            (symbol, self.s.primary_exchange, tf, ts, now, "no_run_before_next_close"))
+        return len(missed)
+
     # ------------------------------------------------------------ predict
     def predict(self, symbol: str, tf: str, now: int | None = None) -> dict:
         now = now or now_ms()
@@ -147,6 +194,19 @@ class Predictor:
         late = (now - int(row["decision_ts"])) > 0.25 * self.s.horizon_bars * TIMEFRAME_MS[tf]
         if late:
             reasons.append("late_decision")
+        issue_codes = {i["code"] for i in q["issues"]}
+        if issue_codes & STALE_CODES:
+            reasons.append("stale_data")
+        missing_share = float(np.mean(~np.isfinite(x[0]))) if x.size else 1.0
+        if missing_share > 0.2:
+            reasons.append("insufficient_history")
+        bt = self.baseline(prod)
+        if self.s.require_baseline_edge and not (bt and bt.get("passed")):
+            reasons.append("model_not_better_than_baseline")
+        oos_bt = (prod.get("metrics") or {}).get("backtest") or {}
+        if signal != "NO TRADE" and self.s.require_cost_edge and not (
+                (oos_bt.get("trades") or 0) >= self.s.min_oos_signals and (oos_bt.get("avg_net_bps") or 0) > 0):
+            reasons.append("no_edge_after_costs")  # direction alone is not a profitable trade
         ni, nr = snap["news_impact"], snap["news_relevance"]
         gate_detail = {  # exact numbers behind the decision, shown in the dashboard
             "confidence": conf, "threshold": self.s.confidence_threshold,
@@ -158,6 +218,12 @@ class Predictor:
             # decided after more than a quarter of the horizon had passed (e.g. a delayed scheduled run):
             # still causal, but not usable as a timely signal
             "late": late,
+            "missing_feature_share": round(missing_share, 3),
+            "baseline": bt and {k: bt.get(k) for k in ("passed", "gain", "gain_ci95", "p_better", "p_required",
+                                                        "log_loss_model", "log_loss_naive", "n")},
+            "costs": self.costs(snap, prod),
+            "factors": self.factors(art, x, model_dir),
+            "check_ts": candle_ts + (self.s.horizon_bars + 1) * TIMEFRAME_MS[tf],
         }
         if signal in ("UP", "DOWN") and nr >= 0.5 and ((signal == "UP" and ni <= -0.35) or (signal == "DOWN" and ni >= 0.35)):
             reasons.append("news_conflict")  # news can veto, never create, a signal
@@ -179,7 +245,8 @@ class Predictor:
              json.dumps(reasons), json.dumps(gate_detail, default=float), regime, q["score"], ni, nr,
              FEATURE_VERSION, prod["version"],
              json.dumps(feat_dict), json.dumps(snap, default=str)))
-        out = {"status": "predicted", "symbol": symbol, "timeframe": tf, "candle_ts": candle_ts, "prediction": final,
+        gaps = self.record_gaps(symbol, tf, candle_ts, now)
+        out = {"status": "predicted", "missed_before": gaps, "symbol": symbol, "timeframe": tf, "candle_ts": candle_ts, "prediction": final,
                "p_up": p_up, "p_down": p_down, "p_flat": p_flat, "confidence": conf, "reasons": reasons,
                "regime": regime, "model_version": prod["version"], "gate": gate_detail}
         log.info("%s %s %s up=%.3f down=%.3f flat=%.3f reasons=%s", symbol, tf, final, p_up, p_down, p_flat, reasons)

@@ -85,3 +85,49 @@ def _decode(row: dict) -> dict:
         v = out.pop(k, None)
         out[k.replace("_json", "")] = json.loads(v) if v else None
     return out
+
+
+def artifact_ok(path: str | None, model_dir: Path | None = None) -> tuple[bool, str | None]:
+    """The artifact exists and loads (a truncated or corrupt file fails here, not during prediction)."""
+    p = resolve_path(path, model_dir)
+    if p is None or not p.exists():
+        return False, "missing"
+    try:
+        art = joblib.load(p)
+        if "model" not in art or "features" not in art:
+            return False, "incomplete"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"unreadable: {type(exc).__name__}"
+    return True, None
+
+
+def _summary(v: dict | None) -> dict | None:
+    if not v:
+        return None
+    m = v.get("metrics") or {}
+    bt = m.get("baseline_test") or {}
+    return {"version": v["version"], "log_loss": m.get("log_loss"), "brier": m.get("brier"), "accuracy": m.get("accuracy"),
+            "naive_log_loss": (m.get("baseline_prior") or {}).get("log_loss"), "baseline_p_better": bt.get("p_better")}
+
+
+def rollback(db: Database, key: str, model_dir: Path | None, reason: str, to_version: str | None = None) -> dict:
+    """Return the previous working model to production. The replaced version is kept (status rolled_back)."""
+    cur = get_production(db, key)
+    rows = db.query("SELECT * FROM model_registry WHERE model_key=? AND status='archived' "
+                    "ORDER BY COALESCE(promoted_ms, created_ms) DESC", (key,))
+    for r in rows:
+        if to_version and r["version"] != to_version:
+            continue
+        ok, _ = artifact_ok(r["artifact_path"], model_dir)
+        if not ok:
+            continue
+        with db.transaction():
+            if cur:
+                db.execute("UPDATE model_registry SET status='rolled_back' WHERE version=?", (cur["version"],))
+            db.execute("UPDATE model_registry SET status='production', promoted_ms=?, reason=? WHERE version=?",
+                       (now_ms(), f"rollback: {reason}", r["version"]))
+        new = get_production(db, key)
+        payload = {"from": _summary(cur), "to": _summary(new), "reason": reason}
+        db.log_event("model_rollback", payload, key)
+        return {"status": "rolled_back", **payload}
+    return {"status": "no_previous_model", "key": key, "reason": reason}

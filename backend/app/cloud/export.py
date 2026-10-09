@@ -16,10 +16,10 @@ from ..market.candles import load_candles
 from ..ml.features import compute_indicators
 from ..news.service import news_features
 
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 METRIC_KEYS = ("n", "accuracy", "log_loss", "brier", "ece", "f1_macro", "precision_macro", "recall_macro",
                "signals", "baseline_prior", "label_distribution", "gate_diagnostics", "label_diagnostics",
-               "by_regime", "method", "backtest", "confusion_matrix", "folds")
+               "by_regime", "method", "backtest", "confusion_matrix", "folds", "baseline_test")
 
 
 def clean(o):
@@ -93,12 +93,28 @@ def export_public(db: Database, settings: Settings, out_dir: Path) -> dict:
                                         "reason": prod["reason"],
                                         "metrics": {k: (prod["metrics"] or {}).get(k) for k in METRIC_KEYS}},
                 "versions": [{"version": v["version"], "status": v["status"], "created_ms": v["created_ms"],
+                              "promoted_ms": v.get("promoted_ms"), "parent_version": v.get("parent_version"),
                               "reason": v["reason"], "log_loss": (v["metrics"] or {}).get("log_loss"),
-                              "accuracy": (v["metrics"] or {}).get("accuracy"),
+                              "accuracy": (v["metrics"] or {}).get("accuracy"), "brier": (v["metrics"] or {}).get("brier"),
+                              "naive_log_loss": ((v["metrics"] or {}).get("baseline_prior") or {}).get("log_loss"),
+                              "baseline_test": (v["metrics"] or {}).get("baseline_test") or db.get_state(f"baseline_test:{v['version']}"),
+                              "by_regime": {r: {"n": x.get("n"), "log_loss": x.get("log_loss"), "accuracy": x.get("accuracy")}
+                                            for r, x in ((v["metrics"] or {}).get("by_regime") or {}).items()},
+                              "procedure": (v.get("params") or {}).get("procedure"),
+                              "n_train": v.get("n_train"), "train_end_ts": v.get("train_end_ts"),
                               "comparison": v["comparison"] and {k: v["comparison"].get(k) for k in
                                                                  ("n_holdout", "logloss_gain", "bootstrap_p_better",
-                                                                  "logloss_production", "logloss_challenger", "checks", "promote")}}
+                                                                  "logloss_production", "logloss_challenger", "brier_production",
+                                                                  "brier_challenger", "accuracy_production", "accuracy_challenger",
+                                                                  "halves_gain", "by_regime", "checks", "promote", "kind")}}
                              for v in versions],
+                "baseline_test": (db.get_state("baseline_tests") or {}).get(key),
+                "gaps": {"total": db.scalar("SELECT COUNT(*) FROM prediction_gaps WHERE symbol=? AND timeframe=?", (sym, tf)),
+                         "last_24h": db.scalar("SELECT COUNT(*) FROM prediction_gaps WHERE symbol=? AND timeframe=? AND candle_ts>=?",
+                                               (sym, tf, now - 86_400_000)),
+                         "recent": [r["candle_ts"] for r in db.query(
+                             "SELECT candle_ts FROM prediction_gaps WHERE symbol=? AND timeframe=? ORDER BY candle_ts DESC LIMIT 20",
+                             (sym, tf))]},
                 "learning_status": db.get_state(f"learning_status:{key}"),
                 "ledger_review": ledger_review(db, sym, tf, settings.horizon_bars),
             }
@@ -118,8 +134,36 @@ def export_public(db: Database, settings: Settings, out_dir: Path) -> dict:
     for e in events:
         e["payload"] = json.loads(e.pop("payload_json") or "{}")
     last_cycle = db.get_state("last_cycle") or {}
+    from .cycle import source_stats
+    last_pred = db.query_one("SELECT MAX(created_ms) AS t FROM predictions") or {}
+    resolved = db.query_one("SELECT COUNT(*) AS n, MIN(candle_ts) AS a, MAX(candle_ts) AS b FROM predictions "
+                            "WHERE resolved_ms IS NOT NULL") or {}
+    hb = db.get_state("heartbeat:cycle") or {}
+    health = {
+        "backend_mode": settings.backend_mode,
+        "cycle_interval_sec": 900 if settings.backend_mode == "scheduled" else 60,
+        "last_cycle_started_ms": last_cycle.get("started_ms"), "last_cycle_finished_ms": last_cycle.get("finished_ms"),
+        "last_cycle_ok": last_cycle.get("ok"), "heartbeat_ms": hb.get("ts_ms"),
+        "last_prediction_ms": last_pred.get("t"),
+        "resolved_predictions": {"n": resolved.get("n"), "first_candle_ts": resolved.get("a"), "last_candle_ts": resolved.get("b")},
+        "database": last_cycle.get("db"), "last_recovery": db.get_state("last_recovery"),
+        "models_check": last_cycle.get("models_check"),
+        "wait_for_close": last_cycle.get("wait_for_close"),
+        "notifications": {"enabled": settings.notify_enabled,
+                          "channels": {"ntfy": bool(settings.ntfy_topic),
+                                       "telegram": bool(settings.telegram_bot_token and settings.telegram_chat_id)},
+                          "events": settings.notify_events, "min_confidence": settings.notify_min_confidence,
+                          "min_quality": settings.notify_min_quality, "timeframes": settings.notify_timeframes,
+                          "symbols": settings.notify_symbols, "max_age_sec": settings.notify_max_age_sec,
+                          "language": settings.notify_lang, "config": last_cycle.get("notify_config")},
+    }
+    changes = db.query("SELECT ts_ms, model_key, event_type, payload_json FROM learning_events WHERE event_type IN "
+                       "('baseline_trained','challenger_promoted','challenger_rejected','model_rollback','operator_command',"
+                       "'database_recovery') ORDER BY id DESC LIMIT 60")
+    for e in changes:
+        e["payload"] = json.loads(e.pop("payload_json") or "{}")
     state = {
-        "export_version": EXPORT_VERSION, "generated_ms": now, "mode": "scheduled",
+        "export_version": EXPORT_VERSION, "generated_ms": now, "mode": settings.backend_mode,
         "schedule_note": "The backend runs as a scheduled job (about every 15 minutes). Live WebSocket data is sampled "
                          "during each run; between runs the dashboard shows the last verified values with their age.",
         "settings": {"symbols": settings.symbols, "predict_timeframes": settings.predict_timeframes,
@@ -136,8 +180,10 @@ def export_public(db: Database, settings: Settings, out_dir: Path) -> dict:
                            "no_trade_reasons": reasons},
         "news": {"status": db.get_state("news_status"), "events": news},
         "learning": {"last_run": db.get_state("learning_last_run"), "events": events},
-        "last_cycle": {k: last_cycle.get(k) for k in ("started_ms", "duration_sec", "ok", "errors", "timings_sec", "primary_exchange")},
+        "last_cycle": {k: last_cycle.get(k) for k in ("started_ms", "finished_ms", "duration_sec", "ok", "errors", "timings_sec",
+                                                      "primary_exchange", "wait_for_close")},
         "last_backup": db.get_state("last_backup"),
+        "health": health, "source_stats": source_stats(db, now), "model_changes": changes,
         "disclaimer": "Read-only research system. Probabilities are not trading recommendations; no orders are placed.",
     }
     _write(out_dir / "state.json", state)

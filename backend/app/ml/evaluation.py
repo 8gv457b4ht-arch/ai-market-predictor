@@ -193,6 +193,9 @@ def walk_forward(frame: pd.DataFrame, features: list[str], horizon: int, folds: 
         p = model.predict_proba(te[features].to_numpy(float))
         part = te[["open_ts", "open", "close", "fwd_return", "label", "label_threshold", "regime"]].copy()
         part[["p_down", "p_flat", "p_up"]] = p
+        # naive benchmark for exactly these rows: class frequencies of this fold's training window
+        prior = np.clip(np.bincount(ytr, minlength=3) / len(ytr), 1e-6, 1)
+        part[["p_naive_down", "p_naive_flat", "p_naive_up"]] = prior / prior.sum()
         part["fold"] = k
         oos_parts.append(part)
         fm = classification_metrics(te["label"].astype(int).to_numpy(), p)
@@ -216,6 +219,7 @@ def walk_forward(frame: pd.DataFrame, features: list[str], horizon: int, folds: 
         "median_abs_forward_return_bps": float(np.nanmedian(fr) * 1e4),
         "share_moves_above_threshold": float(np.nanmean(fr > thr)),
     }
+    metrics["baseline_test"] = baseline_test(oos, horizon)
     metrics["folds"] = fold_rows
     metrics["method"] = f"expanding walk-forward, {len(fold_rows)} folds, purge={horizon} bars, out-of-sample only"
     return {"metrics": metrics, "oos": oos}
@@ -281,3 +285,43 @@ def backtest(oos: pd.DataFrame, timeframe: str, horizon: int, threshold: float, 
         "period": {"start": int(ts[0]), "end": int(ts[-1])},
         "disclaimer": "Historical out-of-sample simulation. Not a guarantee of future results.",
     }
+
+
+# ------------------------------------------------------- model vs naive baseline
+NAIVE_COLS = ["p_naive_down", "p_naive_flat", "p_naive_up"]
+
+
+def _block_bootstrap(diff: np.ndarray, block: int, n_boot: int = 2000, seed: int = 11) -> np.ndarray:
+    n = len(diff)
+    block = max(1, min(block, n))
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    starts = rng.integers(0, n - block + 1, size=(n_boot, n_blocks))
+    idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n]
+    return diff[idx].mean(axis=1)
+
+
+def baseline_test(oos: pd.DataFrame, horizon: int, p_required: float = 0.95) -> dict | None:
+    """Is the model better than always predicting the training base rates, on the same unseen rows?
+
+    Per-row log-loss difference (naive - model), moving-block bootstrap (block = horizon, because
+    overlapping labels are autocorrelated): mean gain, 95% interval, P(gain > 0)."""
+    if oos is None or len(oos) < 50 or not set(NAIVE_COLS) <= set(oos.columns):
+        return None
+    y = oos["label"].astype(int).to_numpy()
+    pm = np.clip(oos[["p_down", "p_flat", "p_up"]].to_numpy(float), 1e-9, 1)
+    pn = np.clip(oos[NAIVE_COLS].to_numpy(float), 1e-9, 1)
+    ll_m = -np.log(pm[np.arange(len(y)), y])
+    ll_n = -np.log(pn[np.arange(len(y)), y])
+    diff = ll_n - ll_m
+    boots = _block_bootstrap(diff, horizon)
+    onehot = np.eye(3)[y]
+    p_better = float((boots > 0).mean())
+    gain = float(diff.mean())
+    return {"n": int(len(y)), "log_loss_model": float(ll_m.mean()), "log_loss_naive": float(ll_n.mean()),
+            "gain": gain, "gain_ci95": [float(np.quantile(boots, 0.025)), float(np.quantile(boots, 0.975))],
+            "relative_gain": float(gain / ll_n.mean()) if ll_n.mean() > 0 else None,
+            "p_better": p_better, "p_required": p_required,
+            "brier_model": float(np.mean(np.sum((pm - onehot) ** 2, axis=1))),
+            "brier_naive": float(np.mean(np.sum((pn - onehot) ** 2, axis=1))),
+            "passed": bool(gain > 0 and p_better >= p_required)}

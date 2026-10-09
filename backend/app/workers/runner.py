@@ -1,6 +1,6 @@
 """Service entry points. Each docker-compose service runs one of these:
 
-    python -m backend.app.workers.runner collector|news|predictor|learner|backup
+    python -m backend.app.workers.runner collector|news|predictor|learner|backup|publisher
 """
 from __future__ import annotations
 
@@ -84,8 +84,8 @@ def periodic(service: str, fn, interval, request_key: str | None = None, run_fir
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1 or argv[0] not in {"collector", "news", "predictor", "learner", "backup"}:
-        print("usage: python -m backend.app.workers.runner collector|news|predictor|learner|backup", file=sys.stderr)
+    if len(argv) != 1 or argv[0] not in {"collector", "news", "predictor", "learner", "backup", "publisher"}:
+        print("usage: python -m backend.app.workers.runner collector|news|predictor|learner|backup|publisher", file=sys.stderr)
         return 2
     service = argv[0]
     setup_logging(service)
@@ -120,8 +120,16 @@ def main(argv: list[str]) -> int:
             keys = [registry.model_key(sym, tf, s.horizon_bars) for sym in s.symbols for tf in s.predict_timeframes]
             missing = any(registry.get_production(db, k) is None for k in keys)
             return min(120.0, s.learning_interval_sec) if missing else s.learning_interval_sec
-        periodic("learner", lambda forced: run_learning_once(db, s, force=forced), learner_interval,
-                 "learning_request")
+        from ..cloud.health import baseline_tests, verify_models
+
+        def learn(forced):
+            res = {"models_check": verify_models(db, s), "learning": run_learning_once(db, s, force=forced)}
+            res["baseline_tests"] = baseline_tests(db, s)  # the predictor gates signals on this
+            return res
+        periodic("learner", learn, learner_interval, "learning_request")
+    elif service == "publisher":
+        from .publisher import run_publisher
+        run_publisher(db, s, _stop_event())
     elif service == "backup":
         from .backup import run_backup_once
         periodic("backup", lambda forced: run_backup_once(db, s), s.backup_interval_sec, "backup_request")

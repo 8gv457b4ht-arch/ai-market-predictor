@@ -61,34 +61,66 @@ async def main(tmp: Path):
             await page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}") else r.abort())
             await page.route_web_socket("wss://**", lambda ws: ws.close())
             await page.goto(f"http://127.0.0.1:{port}/")
-            await page.wait_for_function("() => /backend/.test(document.querySelector('#modeNote').textContent)", timeout=30000)
+            await page.wait_for_function("() => /фонового процесса/.test(document.querySelector('#modeNote').textContent)", timeout=30000)
             await page.wait_for_timeout(2500)
             status = await page.text_content("#statusGrid")
             if name == "desktop":
                 print("mode:", await page.text_content("#modeNote"))
-                print("status:", " | ".join(x.strip()[:70] for x in status.split("●")))
+                print("status:", status[:600])
                 print("price:", await page.text_content("#price"), "| signal:", await page.text_content("#signal"))
                 print("reasons:", await page.text_content("#reasons"))
-                print("why:", (await page.text_content("#whyNoTrade"))[:400])
-                assert "24/7 backend" in await page.text_content("#modeNote")
-                assert "RUNNING" in status and "VERIFIED" in status and "READY" in status
-                assert "PARTIAL" in status and "BTC/USDT only" in status  # fixture streams BTC only: ETH must not count as verified
+                assert "по расписанию" in await page.text_content("#modeNote")
+                # a scheduled backend is never LIVE; this browser has no exchange access here
+                assert "LIVE" not in status and "DELAYED" in status and "OK" in status
+                for name_ru in ("API (данные сервера)", "Binance", "Bybit", "OKX", "Исторические данные", "WebSocket", "База данных",
+                                "Модель", "Новости", "Последний успешный прогноз", "Последний запуск фонового процесса", "Последняя резервная копия"):
+                    assert name_ru in status, name_ru
+                assert "region_blocked" in status and "заблокировано в этом регионе" in status  # machine code + explanation
                 assert (await page.text_content("#price")).startswith("$")
-                assert "out-of-sample" in await page.text_content("#whyNoTrade")
-                assert "region" in await page.text_content("#exTable")  # binance blocked at the backend
+                assert "вне выборки" in await page.text_content("#whyNoTrade")
+                assert "region_blocked" in await page.text_content("#exTable")
                 ledger = await page.text_content("#ledger")
-                assert "Candle" in ledger and ("NO TRADE" in ledger or "UP" in ledger or "DOWN" in ledger)
+                assert "Свеча" in ledger and ("NO TRADE" in ledger or "UP" in ledger or "DOWN" in ledger)
                 assert not await page.is_visible("#welcome")
                 for tab in ("volume", "cvd", "book", "ind", "price"):
                     await page.click(f"button[data-chart={tab}]")
                     await page.wait_for_timeout(250)
                     if tab != "cvd":
                         assert not await page.is_visible("#chartEmpty"), (tab, await page.text_content("#chartEmpty"))
+                # filters: all assets / all timeframes / last 24 h, then the details dialog of one prediction
+                await page.select_option("#fSymbol", "all")
+                await page.select_option("#fPeriod", "24h")
+                await page.wait_for_timeout(300)
+                assert "ETH/USDT" in await page.text_content("#ledger") and "BTC/USDT" in await page.text_content("#ledger")
+                await page.click("#ledger tbody tr >> nth=0")
+                await page.wait_for_selector("#predDialog[open]")
+                dlg = await page.text_content("#predDialog")
+                print("dialog:", dlg[:500])
+                for part in ("Ожидаемые издержки", "После издержек", "Против базового прогноза", "Проверка результата", "Версия модели"):
+                    assert part in dlg, part
+                await page.click("#predDialogClose")
+                # languages: no reload, ledger unchanged, nothing untranslated
+                n_rows = await page.evaluate("document.querySelectorAll('#ledger tbody tr').length")
+                await page.evaluate("window.__marker = 7")
+                for lang, word in (("uk", "Стан системи"), ("en", "System status"), ("ru", "Состояние системы")):
+                    await page.select_option("#lang", lang)
+                    await page.wait_for_timeout(500)
+                    body = await page.inner_text("body")
+                    assert await page.text_content("#sysTitle") == word
+                    assert await page.evaluate("window.__marker") == 7
+                    assert await page.evaluate("document.querySelectorAll('#ledger tbody tr').length") == n_rows
+                    leaked = __import__("re").findall(r"\b(?:st|det|chg|model|ledger|reason|pred|kind|cls|why|filter)\.[a-z_]+\.?[a-z_]*\b", body)
+                    assert not leaked, (lang, leaked[:5])
                 await page.select_option("#ledgerFilter", "notrade")
                 await page.wait_for_timeout(300)
             else:
-                print("mobile scrollWidth:", await page.evaluate("document.documentElement.scrollWidth"))
-                assert await page.evaluate("document.documentElement.scrollWidth") <= 390
+                for lang in ("ru", "uk", "en"):
+                    await page.select_option("#lang", lang)
+                    await page.wait_for_timeout(400)
+                    sw = await page.evaluate("document.documentElement.scrollWidth")
+                    print("mobile", lang, "scrollWidth:", sw)
+                    assert sw <= 390, (lang, sw)
+                await page.select_option("#lang", "ru")
             await page.screenshot(path=str(APP.parent / f"server_{name}.png"), full_page=True)
             await ctx.close()
         assert not errors, errors

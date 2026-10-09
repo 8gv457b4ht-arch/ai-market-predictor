@@ -59,7 +59,7 @@ async def main(tmp: Path):
             page.on("pageerror", lambda e: errors.append(str(e)))
             # exchanges unreachable from this browser: everything must come from the backend
             await page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}") else r.abort())
-            await page.route_web_socket("wss://**", lambda ws: ws.close())
+            await page.route_web_socket("**", lambda ws: ws.close())  # same pattern as the offline test: real exchanges are reachable from CI runners
             await page.goto(f"http://127.0.0.1:{port}/")
             await page.wait_for_function("() => /фонового процесса/.test(document.querySelector('#modeNote').textContent)", timeout=30000)
             await page.wait_for_timeout(2500)
@@ -71,7 +71,8 @@ async def main(tmp: Path):
                 print("reasons:", await page.text_content("#reasons"))
                 assert "по расписанию" in await page.text_content("#modeNote")
                 # a scheduled backend is never LIVE; this browser has no exchange access here
-                assert "LIVE" not in status and "DELAYED" in status and "OK" in status
+                badges = await page.evaluate("[...document.querySelectorAll('#statusGrid .badge')].map(b => b.textContent)")
+                assert len(badges) == 12 and "LIVE" not in badges and "DELAYED" in badges and "OK" in badges, (badges, status[:1500])
                 for name_ru in ("API (данные сервера)", "Binance", "Bybit", "OKX", "Исторические данные", "WebSocket", "База данных",
                                 "Модель", "Новости", "Последний успешный прогноз", "Последний запуск фонового процесса", "Последняя резервная копия"):
                     assert name_ru in status, name_ru

@@ -470,11 +470,11 @@
     $("reasons").textContent = p.prediction === "NO TRADE" ? t("pred.no_trade_because", { reasons: reasonDetail(p) }) : t("pred.passed", { dir: dirText(p.model_direction) });
     const g = p.gate || {};
     $("predMeta").textContent = t("pred.meta", { candle: when(p.candle_ts), price: priceFmt(p.price), ex: p.exchange,
-      decided: isNum(g.decision_delay_sec) ? t("pred.decided_after", { min: Math.round(g.decision_delay_sec / 60) }) + (g.late ? ` (${t("pred.late")})` : "") : when(p.created_ms),
+      decided: isNum(g.decision_delay_sec) ? (g.decision_delay_sec < 120 ? t("pred.decided_after_sec", { sec: Math.round(g.decision_delay_sec) }) : t("pred.decided_after", { min: Math.round(g.decision_delay_sec / 60) })) + (g.late ? ` (${t("pred.late")})` : "") : when(p.created_ms),
       model: p.model_version });
     $("predDetails").replaceChildren(...detailBlocks(p, v.horizon));
     const b = liveBook(v.primary, S.symbol) || (v.serverBook && { spreadBps: v.serverBook.spread_bps, imbalance: v.serverBook.imbalance, ageSec: (Date.now() - v.serverBook.recv_ms) / 1000 });
-    $("spread").textContent = b && isNum(b.spreadBps) ? `${num(b.spreadBps, 2)} ${t("unit.bps")}${b.ageSec > 30 ? " (" + ago(Date.now() - b.ageSec * 1000) + ")" : ""}` : t("common.unavailable");
+    $("spread").textContent = b && isNum(b.spreadBps) ? `${num(b.spreadBps, b.spreadBps < 0.1 ? 4 : 2)} ${t("unit.bps")}${b.ageSec > 30 ? " (" + ago(Date.now() - b.ageSec * 1000) + ")" : ""}` : t("common.unavailable");
     $("imbalance").textContent = b && isNum(b.imbalance) ? (b.imbalance > 0 ? "+" : "") + num(b.imbalance, 2) : "—";
   }
   // details shared by the readout and the prediction dialog: direction vs after-cost result, factors, check time, outcome
@@ -741,7 +741,13 @@
   function scaleOf(vals, lo, hi, pad = 0.06) { let mn = Infinity, mx = -Infinity; for (const v of vals) if (isNum(v)) { mn = Math.min(mn, v); mx = Math.max(mx, v); } if (!isFinite(mn)) { mn = 0; mx = 1; } if (mn === mx) { mn -= 1; mx += 1; } const sp = mx - mn; mn -= sp * pad; mx += sp * pad; return { mn, mx, y: (v) => hi - ((v - mn) / (mx - mn)) * (hi - lo) }; }
   function axis(ctx, sc, x0, x1, top, bottom, fmt) { ctx.strokeStyle = css("--grid"); ctx.fillStyle = css("--ink-2"); ctx.lineWidth = 1; ctx.textAlign = "left"; for (let i = 0; i <= 4; i++) { const v = sc.mn + ((sc.mx - sc.mn) * i) / 4, y = sc.y(v); if (y < top - 1 || y > bottom + 1) continue; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.fillText(fmt(v), x1 + 6, y + 4); } }
   function line(ctx, xs, ys, sc, color, w = 1.5) { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); let on = false; ys.forEach((v, i) => { if (!isNum(v)) { on = false; return; } on ? ctx.lineTo(xs[i], sc.y(v)) : ctx.moveTo(xs[i], sc.y(v)); on = true; }); ctx.stroke(); }
-  function times(ctx, xs, ts, bottom) { ctx.fillStyle = css("--ink-2"); ctx.textAlign = "center"; const st = Math.max(1, Math.floor(ts.length / 5)); for (let i = st; i < ts.length; i += st) ctx.fillText(when(ts[i]), xs[i], bottom + 14); }
+  const shortTime = (ms) => new Date(ms).toLocaleString(loc(), { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  function times(ctx, xs, ts, bottom) {
+    ctx.fillStyle = css("--ink-2"); ctx.textAlign = "center";
+    const width = (xs[xs.length - 1] || 0) - (xs[0] || 0), labels = Math.max(2, Math.min(5, Math.floor(width / 120)));
+    const st = Math.max(1, Math.floor(ts.length / (labels + 1)));
+    for (let i = st; i < ts.length - st / 2; i += st) ctx.fillText(shortTime(ts[i]), xs[i], bottom + 14);
+  }
   function empty(msg) { $("chartEmpty").textContent = msg; $("chartEmpty").hidden = !msg; }
   function hover(xs, text) { const c = $("chart"), tip = $("chartTip"); const show = (cx) => { const x = cx - c.getBoundingClientRect().left; let b = 0; xs.forEach((v, i) => { if (Math.abs(v - x) < Math.abs(xs[b] - x)) b = i; }); tip.textContent = text(b); tip.hidden = false; }; c.onmousemove = (e) => show(e.clientX); c.onmouseleave = () => (tip.hidden = true); c.ontouchmove = (e) => e.touches[0] && show(e.touches[0].clientX); }
   function drawChart(v) {

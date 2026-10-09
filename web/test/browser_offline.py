@@ -7,6 +7,12 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
+
+def _annotate(exc: BaseException) -> None:
+    import traceback
+    msg = "".join(traceback.format_exception(exc)).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+    print(f"::error title={Path(__file__).name} failed::{msg[-3000:]}", flush=True)
+
 APP = Path(__file__).resolve().parents[1] / "dist" / "AI_Market_Predictor.html"
 CHROME = os.getenv("CHROME_PATH") or ("/opt/pw-browsers/chromium-1194/chrome-linux/chrome" if os.path.exists("/opt/pw-browsers/chromium-1194/chrome-linux/chrome") else None)
 
@@ -22,8 +28,9 @@ async def main():
         await page.route("**/*", lambda r: r.abort() if not r.request.url.startswith("file:") else r.continue_())
         await page.route_web_socket("**", lambda ws: ws.close())
         await page.goto(APP.as_uri())
-        assert await page.is_visible("#welcome"), "first run shows the Start screen"
+        await page.wait_for_selector("#welcome", state="visible", timeout=15000)  # first run shows the Start screen
         await page.click("#startBtn")
+        await page.wait_for_function("() => document.querySelector('#price').textContent !== '—'", timeout=30000)
         await page.wait_for_timeout(9000)
         price = await page.text_content("#price")
         status = await page.text_content("#statusGrid")
@@ -46,4 +53,8 @@ async def main():
         print("OFFLINE TEST PASSED; page errors:", errors or "none")
         await b.close()
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except BaseException as exc:
+    _annotate(exc)
+    raise

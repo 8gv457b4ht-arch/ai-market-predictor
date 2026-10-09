@@ -11,6 +11,12 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
+
+def _annotate(exc: BaseException) -> None:
+    import traceback
+    msg = "".join(traceback.format_exception(exc)).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+    print(f"::error title={Path(__file__).name} failed::{msg[-3000:]}", flush=True)
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 APP = ROOT / "web" / "dist" / "AI_Market_Predictor.html"
@@ -55,7 +61,8 @@ async def main(tmp: Path):
             await page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}") else r.abort())
             await page.route_web_socket("wss://**", lambda ws: ws.close())
             await page.goto(f"http://127.0.0.1:{port}/")
-            await page.wait_for_timeout(3500)
+            await page.wait_for_function("() => /backend/.test(document.querySelector('#modeNote').textContent)", timeout=30000)
+            await page.wait_for_timeout(2500)
             status = await page.text_content("#statusGrid")
             if name == "desktop":
                 print("mode:", await page.text_content("#modeNote"))
@@ -93,4 +100,8 @@ async def main(tmp: Path):
 if __name__ == "__main__":
     TMP = Path(tempfile.mkdtemp())
     produce_backend_output(TMP)  # synchronous backend cycle first, outside the browser's event loop
-    asyncio.run(main(TMP))
+    try:
+        asyncio.run(main(TMP))
+    except BaseException as exc:
+        _annotate(exc)
+        raise

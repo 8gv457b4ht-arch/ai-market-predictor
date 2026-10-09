@@ -12,6 +12,12 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.async_api import async_playwright
 
+
+def _annotate(exc: BaseException) -> None:
+    import traceback
+    msg = "".join(traceback.format_exception(exc)).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+    print(f"::error title={Path(__file__).name} failed::{msg[-3000:]}", flush=True)
+
 APP = Path(__file__).resolve().parents[1] / "dist" / "AI_Market_Predictor.html"
 CHROME = os.getenv("CHROME_PATH") or ("/opt/pw-browsers/chromium-1194/chrome-linux/chrome" if os.path.exists("/opt/pw-browsers/chromium-1194/chrome-linux/chrome") else None)
 TF = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
@@ -167,4 +173,8 @@ async def main():
         print("MOCKED TEST PASSED; page errors:", errors or "none", "| console errors:", console[:3] or "none")
         await b.close()
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except BaseException as exc:
+    _annotate(exc)
+    raise

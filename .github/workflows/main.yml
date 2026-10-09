@@ -1,0 +1,103 @@
+name: AI Market Predictor
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "1,16,31,46 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.u.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: u
+        run: |
+          if [ -f ai-market-predictor-repo.zip ]; then
+            unzip -q ai-market-predictor-repo.zip -d /tmp/u
+            rm -rf /tmp/u/ai-market-predictor/.github && cp -a /tmp/u/ai-market-predictor/. ./
+            git rm -q ai-market-predictor-repo.zip
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A && git commit -q -m "Unpack source archive" && git push -q
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  tests:
+    if: github.event_name != 'schedule'
+    needs: unpack
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with: {ref: "${{ needs.unpack.outputs.sha }}"}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.13"}
+      - uses: actions/setup-node@v5
+        with: {node-version: 22}
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt playwright
+      - run: python -m compileall -q backend scripts tests && python -m pytest -v
+      - run: node --test web/test/core.test.js && python web/build.py
+      - run: python -m playwright install --with-deps chromium && python web/test/browser_offline.py
+      - run: docker build --target test . && docker build --target runtime -t amp .
+      - run: |
+          cp .env.example .env && docker run -d -p 8000:8000 --env-file .env amp
+          for i in $(seq 30); do curl -fsS localhost:8000/api/health && exit 0; sleep 2; done; exit 1
+  pages:
+    if: github.event_name != 'schedule'
+    needs: unpack
+    runs-on: ubuntu-latest
+    environment: {name: github-pages, url: "${{ steps.d.outputs.page_url }}"}
+    steps:
+      - uses: actions/checkout@v5
+        with: {ref: "${{ needs.unpack.outputs.sha }}"}
+      - run: |
+          python3 web/build.py && mkdir -p _site
+          cp web/dist/AI_Market_Predictor.html _site/index.html && touch _site/.nojekyll
+          echo "{\"state_url\":\"https://raw.githubusercontent.com/${{ github.repository }}/data/public/\"}" > _site/config.json
+      - uses: actions/upload-pages-artifact@v4
+        with: {path: _site}
+      - id: d
+        uses: actions/deploy-pages@v4
+  backend:
+    needs: unpack
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    concurrency: {group: backend-state, cancel-in-progress: false}
+    steps:
+      - uses: actions/checkout@v5
+        with: {ref: "${{ needs.unpack.outputs.sha }}"}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.13", cache: pip, cache-dependency-path: backend/requirements.txt}
+      - run: pip install -r backend/requirements.txt
+      - name: Restore state
+        run: |
+          mkdir -p state/models state/backups public
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth 1 origin data && git archive FETCH_HEAD state | tar -x
+            if [ -f state/market.sqlite3.gz ]; then gunzip -f state/market.sqlite3.gz; fi
+          fi
+      - name: Run cycle
+        env:
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LOG_FORMAT: text
+        run: python scripts/cloud_cycle.py --state state --public public
+      - name: Save state
+        if: always()
+        run: |
+          test -f state/market.sqlite3
+          python -c "import sqlite3;c=sqlite3.connect('state/market.sqlite3');c.execute('PRAGMA wal_checkpoint(TRUNCATE)');c.close()"
+          rm -f state/market.sqlite3-wal state/market.sqlite3-shm && gzip -f state/market.sqlite3
+          O=$(mktemp -d) && cp -r state public "$O/" && cd "$O" && git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -q -m "state run ${{ github.run_id }}"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data

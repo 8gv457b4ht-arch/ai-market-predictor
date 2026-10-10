@@ -61,7 +61,7 @@ def evaluate(fwd: np.ndarray, P: np.ndarray, Q: np.ndarray, base: Baseline, cost
     llb = -np.log(np.clip(Pb[np.arange(n), y], 1e-9, 1))
     block = max(1, h.steps if h.grid != "1s" else h.seconds // 5)
     boots = _block_bootstrap(llb - ll, block) if n >= 20 else np.array([0.0])
-    nz = fwd != 0
+    nz = (fwd != 0) & (Q[:, 1] != 0)  # direction is judged only where both the forecast median and the move have a sign
     sig = gate_array(P, threshold, min_edge)
     act = np.where(sig >= 0)[0]
     taken, i_last = [], -10 ** 9
@@ -165,6 +165,21 @@ def train_one(db: Database, settings: Settings, symbol: str, h: Horizon) -> dict
         st.update({"status": _status(v), "production": version, "holdout": m, **v, "used_until_ts": int(ts[-1]),
                    "reason": "first validation", "moves_beyond_costs_rare": bool(model.degenerate)})
         return _finish(db, key, st, t0, h)
+    params = prod.get("params") or {}
+    if st.get("protocol") not in (None, EVAL_PROTOCOL) and params.get("holdout_start"):
+        # metric definitions changed: recompute the production model's report on exactly its original holdout
+        # (same rows, same model; the promotion criteria and the model itself are unchanged)
+        art = registry.load_artifact(prod["artifact_path"], settings.model_dir)
+        sel = (ts >= int(params["holdout_start"])) & (ts <= int(params.get("holdout_end") or ts[-1]))
+        if sel.sum() >= 20:
+            m = evaluate(fwd[sel], art["model"].proba(X[sel]), art["model"].quantiles(X[sel]), art["baseline"], cost, h,
+                         settings.confidence_threshold, settings.min_edge)
+            v = verdict(m, settings)
+            db.log_event("forecast_reevaluated", {"version": prod["version"], "from_protocol": st.get("protocol"),
+                                                  "to_protocol": EVAL_PROTOCOL, "holdout": m}, key)
+            st.update({"holdout": m, **v, "status": _status(v) if st.get("status") != "degraded" else "degraded",
+                       "reason": f"report recomputed under {EVAL_PROTOCOL}"})
+            return _finish(db, key, st, t0, h)
     # fresh window, never used by an earlier decision
     used_until = int(st.get("used_until_ts") or (prod.get("params") or {}).get("holdout_end") or prod["train_end_ts"])
     fresh = np.where(ts > used_until)[0]
@@ -257,7 +272,7 @@ def priority(st: dict) -> float:
 
 
 def due(st: dict, h: Horizon, now: int) -> bool:
-    if not st.get("last_train_ms"):
+    if not st.get("last_train_ms") or st.get("protocol") not in (None, EVAL_PROTOCOL):
         return True
     interval = RETRAIN_SEC.get(st.get("status", "collecting"), 24 * 3600)
     if h.grid == "1s" and st.get("status") == "collecting":

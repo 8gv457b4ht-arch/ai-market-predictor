@@ -44,6 +44,8 @@ def diagnose(st: dict, cost: float) -> list[str]:
         lo, hi = binom_ci(d, n_ind)
         if lo <= 0.5 <= hi:
             out.append(f"направление угадывается на уровне случайности: {d:.1%} (95 %: {lo:.1%}…{hi:.1%}, n={n_ind})")
+        elif hi < 0.5:
+            out.append(f"направление угадывается ХУЖЕ случайного: {d:.1%} (95 %: {lo:.1%}…{hi:.1%}) — систематическая ошибка знака")
         elif lo > 0.5:
             out.append(f"есть статистически заметное преимущество по направлению: {d:.1%} (95 %: {lo:.1%}…{hi:.1%})")
     if ho.get("mae_bps") is not None and ho.get("mae_rw_bps") is not None and ho["mae_bps"] >= ho["mae_rw_bps"]:
@@ -73,7 +75,7 @@ def main() -> int:
     ap.add_argument("--cost", type=float, default=25.0)
     a = ap.parse_args()
     con = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True)
-    from backend.app.forecast.horizons import HORIZONS
+    from backend.app.forecast.horizons import EVAL_PROTOCOL, HORIZONS
     lines = [f"# Диагностика прогнозов по горизонтам — {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}", "",
              "Источник: независимые проверки моделей (данные, не использованные при обучении) и живые прогнозы из базы.",
              f"Издержки на круг: {a.cost:.0f} б.п. «Независимых» — неперекрывающихся исходов.", ""]
@@ -94,7 +96,12 @@ def main() -> int:
                          + (f"{ho['mae_bps']:.1f} / {ho['mae_rw_bps']:.1f}" if ho.get("mae_bps") is not None else "—") + " | "
                          + (f"{ho['brier']:.4f} / {ho['brier_base']:.4f}" if ho.get("brier") is not None else "—") + " | "
                          + (f"{ho['signals']}: {ho['avg_net_bps']:+.1f}" if ho.get("signals") else ("0" if ho else "—")) + " |")
-            notes.append(f"- **{h.label}**: " + "; ".join(diagnose(st, a.cost)))
+            proto = st.get("protocol")
+            note = "; ".join(diagnose(st, a.cost))
+            if proto and proto != EVAL_PROTOCOL:
+                note += (f" _(отчёт по старому протоколу {proto}: в fp1 нулевая медиана считалась промахом направления,"
+                         f" поэтому «направление» занижено; пересчитается по {EVAL_PROTOCOL} при следующем обучении)_")
+            notes.append(f"- **{h.label}**: " + note)
         lines += ["", *notes, ""]
     Path(a.out).write_text("\n".join(lines), encoding="utf-8")
     print(f"written {a.out}")

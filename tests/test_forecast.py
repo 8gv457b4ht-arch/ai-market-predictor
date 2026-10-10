@@ -177,3 +177,16 @@ def test_scheduler_trains_most_promising_first_within_budget(monkeypatch, tmp_pa
     order.clear()
     out = T.run_training(db, s, budget_sec=-1)
     assert len(order) == 0 and out["postponed"]
+
+
+def test_horizon_without_model_is_retried_soon(monkeypatch, tmp_path):
+    """A horizon that could not be issued (model trained later in the same run) must not wait a full refresh."""
+    s, db = fresh_settings(monkeypatch, tmp_path)
+    from backend.app.forecast.engine import Forecaster
+    f = Forecaster(db, s)
+    calls = []
+    monkeypatch.setattr(f, "issue", lambda sym, h, now: calls.append((h.label, now)) or None)
+    f.tick(1_000_000)
+    n = len(calls)
+    f.tick(1_000_000 + 31_000)
+    assert len(calls) == 2 * n  # every horizon tried again after 30 s, including 1 d (refresh 1 h)

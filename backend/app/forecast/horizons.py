@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-EVAL_PROTOCOL = "fp1"  # evaluation rules; changing compute priorities never changes these
+# evaluation rules; changing compute priorities never changes these.
+# fp2: direction hit rate counts only forecasts whose median has a sign (fp1 counted a zero median as a miss)
+EVAL_PROTOCOL = "fp2"
 
 
 @dataclass(frozen=True)

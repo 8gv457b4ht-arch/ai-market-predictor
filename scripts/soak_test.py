@@ -55,6 +55,8 @@ def main() -> int:
         print("forecast training:", json.dumps(run_training(db, s, 600))[:2000], flush=True)
     samples: dict[str, list[int]] = {ex: [] for ex in s.exchanges}
     made: list[dict] = []
+    status_counts: dict[str, int] = {}
+    errors: list = []
     t_end = time.time() + a.minutes * 60
 
     async def amain():
@@ -72,6 +74,10 @@ def main() -> int:
             if ticker is not None:
                 await asyncio.to_thread(ticker)
             for k, v in out.items():
+                st = v.get("status") or "unknown"
+                status_counts[st] = status_counts.get(st, 0) + 1
+                if st == "error":
+                    errors.append(v.get("error"))
                 if v.get("status") == "predicted":
                     made.append({"key": k, "delay": v["gate"]["decision_delay_sec"], "prediction": v["prediction"],
                                  "reasons": v["reasons"]})
@@ -96,6 +102,7 @@ def main() -> int:
     report = {"minutes": a.minutes, "exchanges": {}, "predictions": len(made), "forecasts": fstats,
               "decision_delay_sec": {"median": statistics.median([m["delay"] for m in made]) if made else None,
                                      "max": max([m["delay"] for m in made]) if made else None},
+              "predictor_status_counts": status_counts, "predictor_errors": sorted(set(map(str, errors)))[:5],
               "by_prediction": {p: sum(1 for m in made if m["prediction"] == p) for p in {m["prediction"] for m in made}}}
     for ex in s.exchanges:
         sm = samples[ex]
@@ -111,7 +118,8 @@ def main() -> int:
         print(f"::notice title=soak {ex}::live {r['live_share']:.1%} of {r['samples']} samples, reconnects {r['reconnects']}, "
               f"gaps {r['gaps']}, stale {r['stale']}, max skew {r['skew']} ms")
     print(f"::notice title=soak predictions::{len(made)} predictions (≈{expected} closes expected), "
-          f"delay median {report['decision_delay_sec']['median']} s, max {report['decision_delay_sec']['max']} s, {report['by_prediction']}")
+          f"delay median {report['decision_delay_sec']['median']} s, max {report['decision_delay_sec']['max']} s, {report['by_prediction']}, "
+          f"predictor statuses {status_counts}, errors {report['predictor_errors']}")
     if fstats:
         issued = sum((v.get("issued") or 0) for k, v in fstats.items() if not k.startswith("_"))
         resolved = sum((v.get("resolved") or 0) for k, v in fstats.items() if not k.startswith("_"))

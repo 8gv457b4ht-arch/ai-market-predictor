@@ -384,3 +384,40 @@ def test_continuous_publisher_builds_one_orphan_commit(monkeypatch, tmp_path):
     tree = next(b for m, p, b in calls if p.endswith("/git/trees"))["tree"]
     assert "state/market.sqlite3.gz" in {x["path"] for x in tree}
     assert sum(1 for m, p, b in calls if p.endswith("/git/blobs")) == len([x for x in tree if x["path"].startswith("public/")])
+
+
+def test_candle_sync_refreshes_after_backfill_and_right_after_a_close(monkeypatch, tmp_path):
+    """Regression (found by the 3-hour real-data soak): the continuous collector reset its sync timestamp on every
+    pass, so after the initial backfill no candle was ever refreshed and the predictor made 0 predictions."""
+    import asyncio
+    from backend.app.market import collector
+    s, db = fresh_settings(monkeypatch, tmp_path, EXCHANGES="okx", PRIMARY_EXCHANGE="okx",
+                           TIMEFRAMES="1m,15m", CANDLE_SYNC_SEC=1, FORECAST_ENABLED=0)
+    sync = collector.CandleSync(db, s)
+    # periodic: due again once the interval passed, not before
+    t0 = 1_791_574_210_000  # 10 s after a 15m (and 1m) close
+    sync.last_sync[("okx", "BTC/USDT", "15m")] = t0
+    assert not sync.due(("okx", "BTC/USDT", "15m"), "15m", t0 + 30_000)
+    assert sync.due(("okx", "BTC/USDT", "15m"), "15m", t0 + 60_000)
+    # close-aware: a bar close since the last sync makes it due ~2 s after the close, even inside the period
+    sync.last_sync[("okx", "BTC/USDT", "1m")] = t0 + 49_000
+    sync.s.candle_sync_sec = 3600
+    assert not sync.due(("okx", "BTC/USDT", "1m"), "1m", t0 + 50_500)   # close at +50 s, settling
+    assert sync.due(("okx", "BTC/USDT", "1m"), "1m", t0 + 52_100)
+    sync.s.candle_sync_sec = 1
+
+    calls = []
+    monkeypatch.setattr(rest, "fetch_klines", lambda ex, sym, tf, limit=1000, end_ms=None: calls.append((tf, limit)) or [])
+    monkeypatch.setattr(rest, "fetch_history", lambda ex, sym, tf, bars, pause=0.2: calls.append((tf, "history")) or [])
+    monkeypatch.setattr(rest, "fetch_ticker", lambda ex, sym: (_ for _ in ()).throw(rest.ExchangeError("x")))
+
+    async def run():
+        stop = asyncio.Event()
+        task = asyncio.create_task(sync.run_exchange("okx", stop))
+        await asyncio.sleep(4.5)
+        stop.set()
+        await task
+    asyncio.run(run())
+    refreshes = [c for c in calls if c[1] == 5]
+    assert len([c for c in calls if c[1] in (1000, "history")]) == 2       # one backfill per timeframe
+    assert len(refreshes) >= 4, calls                                       # then refreshed again and again

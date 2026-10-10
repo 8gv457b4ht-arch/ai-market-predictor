@@ -15,7 +15,7 @@ import logging
 import random
 import time
 
-from ..config import Settings
+from ..config import TIMEFRAME_MS, Settings
 from ..db import Database, now_ms
 from ..exchanges import rest
 from ..exchanges.ws import Protocol, build_protocol
@@ -177,7 +177,8 @@ class CandleSync:
     def __init__(self, db: Database, settings: Settings):
         self.db = db
         self.s = settings
-        self.last_sync: dict[tuple, float] = {}
+        self.last_sync: dict[tuple, int] = {}  # wall-clock ms of the last successful sync
+        self.retry_at: dict[tuple, int] = {}
         self.errors: dict[str, str] = {}
 
     def _bars_for(self, exchange: str, tf: str) -> int:
@@ -196,6 +197,20 @@ class CandleSync:
         else:
             rows = rest.fetch_history(exchange, symbol, tf, want)
         return upsert_candles(self.db, exchange, symbol, tf, rows)
+
+    CLOSE_SETTLE_MS = 2_000  # exchanges need a moment to serve the just-closed bar
+
+    def due(self, key: tuple, tf: str, now: int) -> bool:
+        """Refresh when the periodic interval passed OR a bar of this timeframe closed since the last sync."""
+        last = self.last_sync.get(key)
+        if last is None:
+            return True
+        period_ms = int(1000 * (self.s.candle_sync_sec if tf == "1m" else max(self.s.candle_sync_sec, 60)))
+        if now - last >= period_ms:
+            return True
+        tf_ms = TIMEFRAME_MS[tf]
+        latest_close = (now - self.CLOSE_SETTLE_MS) // tf_ms * tf_ms + self.CLOSE_SETTLE_MS
+        return latest_close > last and now >= latest_close
 
     def refresh(self, exchange: str, symbol: str, tf: str) -> int:
         return upsert_candles(self.db, exchange, symbol, tf, rest.fetch_klines(exchange, symbol, tf, 5))
@@ -218,28 +233,34 @@ class CandleSync:
             for symbol in self.s.symbols:
                 for tf in self.s.timeframes:
                     key = (exchange, symbol, tf)
+                    if now_ms() < self.retry_at.get(key, 0):
+                        continue  # back off after a failure instead of hammering the exchange
                     try:
                         if key not in backfilled:
                             n = await asyncio.to_thread(self.backfill, exchange, symbol, tf)
                             backfilled.add(key)
                             log.info("backfilled %s %s %s: %d candles", exchange, symbol, tf, n)
                         else:
-                            period = self.s.candle_sync_sec if tf == "1m" else max(self.s.candle_sync_sec, 60)
-                            if time.monotonic() - self.last_sync.get(key, 0) >= period:
-                                await asyncio.to_thread(self.refresh, exchange, symbol, tf)
-                        self.last_sync[key] = time.monotonic()
+                            if not self.due(key, tf, now_ms()):
+                                continue  # last_sync only moves on a real sync (it used to move every pass -> never due)
+                            await asyncio.to_thread(self.refresh, exchange, symbol, tf)
+                        self.last_sync[key] = now_ms()
                         self.errors.pop(exchange, None)
                     except Exception as exc:  # noqa: BLE001
                         self.errors[exchange] = f"{type(exc).__name__}: {exc}"[:300]
+                        self.retry_at[key] = now_ms() + 10_000
                         log.warning("candle sync %s %s %s failed: %s", exchange, symbol, tf, exc)
                     if stop.is_set():
                         return
-                try:
-                    await asyncio.to_thread(self.ticker, exchange, symbol)
-                except Exception as exc:  # noqa: BLE001
-                    self.errors[exchange] = f"ticker: {exc}"[:300]
+                tkey = (exchange, symbol, "ticker")
+                if now_ms() - self.last_sync.get(tkey, 0) >= 1000 * max(self.s.candle_sync_sec, 10):
+                    try:
+                        await asyncio.to_thread(self.ticker, exchange, symbol)
+                        self.last_sync[tkey] = now_ms()
+                    except Exception as exc:  # noqa: BLE001
+                        self.errors[exchange] = f"ticker: {exc}"[:300]
             try:
-                await asyncio.wait_for(stop.wait(), timeout=min(10.0, self.s.candle_sync_sec))
+                await asyncio.wait_for(stop.wait(), timeout=min(2.0, self.s.candle_sync_sec))
             except asyncio.TimeoutError:
                 pass
 

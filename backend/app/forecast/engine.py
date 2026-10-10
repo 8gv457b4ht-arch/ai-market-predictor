@@ -88,6 +88,8 @@ class Forecaster:
                 try:
                     if self.issue(sym, h, now):
                         made += 1
+                    else:  # nothing issued (no model or data yet): try again soon, not after a full refresh
+                        self.next_due[key] = now + min(self.refresh_ms(h), 30_000)
                 except Exception:  # noqa: BLE001 - one horizon must not stop the others
                     log.exception("forecast %s %s failed", sym, h.label)
         return {"made": made}
@@ -265,7 +267,7 @@ class Forecaster:
                                 "decisions": {k: int(v) for k, v in d.decision.value_counts().items()}})
                     if len(ok):
                         a, q = ok.actual_bps.astype(float).to_numpy(), ok.q50_bps.astype(float).to_numpy()
-                        nz = a != 0
+                        nz = (a != 0) & (q != 0)
                         gain = (ok.brier_base - ok.brier).astype(float).to_numpy()
                         block = max(1, math.ceil(h.seconds / refresh))
                         boots = _block_bootstrap(gain, block) if len(gain) >= 20 else np.array([np.nan])
